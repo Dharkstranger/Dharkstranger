@@ -134,6 +134,180 @@ export async function verifyTransaction(reference: string): Promise<VerifyResult
   };
 }
 
+// ------------------------------------------------------------------
+// Refunds
+// ------------------------------------------------------------------
+
+export interface RefundResult {
+  providerReference: string | null;
+  status: string;
+}
+
+/** Omit `amountKobo` for a full refund of the original transaction. */
+export async function createRefund(params: {
+  transactionReference: string;
+  amountKobo?: number;
+  reason?: string;
+}): Promise<RefundResult> {
+  if (isSandbox()) {
+    return { providerReference: `sandbox_rf_${Date.now().toString(36)}`, status: "processed" };
+  }
+
+  const res = await fetch(`${API}/refund`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${secretKey()}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      transaction: params.transactionReference,
+      ...(params.amountKobo !== undefined ? { amount: params.amountKobo } : {}),
+      ...(params.reason ? { merchant_note: params.reason } : {}),
+    }),
+  });
+
+  const body = await res.json().catch(() => null);
+  if (!res.ok || !body?.status) {
+    throw new PaystackError(
+      `Refund rejected: ${body?.message ?? `HTTP ${res.status}`}`,
+    );
+  }
+
+  return {
+    providerReference: body.data?.id ? String(body.data.id) : null,
+    status: body.data?.status ?? "pending",
+  };
+}
+
+// ------------------------------------------------------------------
+// Transfers (payouts)
+// ------------------------------------------------------------------
+
+/** Resolves an account number against a bank, returning the account holder. */
+export async function resolveAccount(params: {
+  accountNumber: string;
+  bankCode: string;
+}): Promise<{ accountName: string }> {
+  if (isSandbox()) {
+    return { accountName: "SANDBOX ACCOUNT HOLDER" };
+  }
+
+  const url = `${API}/bank/resolve?account_number=${encodeURIComponent(
+    params.accountNumber,
+  )}&bank_code=${encodeURIComponent(params.bankCode)}`;
+
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${secretKey()}` } });
+  const body = await res.json().catch(() => null);
+  if (!res.ok || !body?.status) {
+    throw new PaystackError(
+      `Could not verify that account: ${body?.message ?? `HTTP ${res.status}`}`,
+    );
+  }
+  return { accountName: body.data.account_name };
+}
+
+export async function listBanks(): Promise<{ name: string; code: string }[]> {
+  if (isSandbox()) {
+    return [
+      { name: "Access Bank", code: "044" },
+      { name: "Guaranty Trust Bank", code: "058" },
+      { name: "Kuda Bank", code: "50211" },
+      { name: "Opay", code: "999992" },
+      { name: "Zenith Bank", code: "057" },
+    ];
+  }
+
+  const res = await fetch(`${API}/bank?country=nigeria&perPage=100`, {
+    headers: { Authorization: `Bearer ${secretKey()}` },
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok || !body?.status) throw new PaystackError("Could not load bank list");
+  return body.data.map((b: { name: string; code: string }) => ({
+    name: b.name,
+    code: b.code,
+  }));
+}
+
+/** Creates (or returns) the transfer recipient a payout is sent to. */
+export async function createTransferRecipient(params: {
+  name: string;
+  accountNumber: string;
+  bankCode: string;
+}): Promise<{ recipientCode: string }> {
+  if (isSandbox()) {
+    return { recipientCode: `sandbox_rcp_${Date.now().toString(36)}` };
+  }
+
+  const res = await fetch(`${API}/transferrecipient`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${secretKey()}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      type: "nuban",
+      name: params.name,
+      account_number: params.accountNumber,
+      bank_code: params.bankCode,
+      currency: "NGN",
+    }),
+  });
+
+  const body = await res.json().catch(() => null);
+  if (!res.ok || !body?.status) {
+    throw new PaystackError(
+      `Could not create transfer recipient: ${body?.message ?? `HTTP ${res.status}`}`,
+    );
+  }
+  return { recipientCode: body.data.recipient_code };
+}
+
+export interface TransferResult {
+  transferCode: string | null;
+  status: string;
+}
+
+/**
+ * Initiates a payout. `reference` must be stable per settlement: Paystack
+ * rejects a duplicate reference, which is the outer guard against paying the
+ * same settlement twice if a run is retried.
+ */
+export async function initiateTransfer(params: {
+  amountKobo: number;
+  recipientCode: string;
+  reference: string;
+  reason: string;
+}): Promise<TransferResult> {
+  if (isSandbox()) {
+    return { transferCode: `sandbox_trf_${params.reference}`, status: "success" };
+  }
+
+  const res = await fetch(`${API}/transfer`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${secretKey()}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      source: "balance",
+      amount: params.amountKobo,
+      recipient: params.recipientCode,
+      reference: params.reference,
+      reason: params.reason,
+      currency: "NGN",
+    }),
+  });
+
+  const body = await res.json().catch(() => null);
+  if (!res.ok || !body?.status) {
+    throw new PaystackError(
+      `Transfer failed: ${body?.message ?? `HTTP ${res.status}`}`,
+    );
+  }
+
+  return { transferCode: body.data?.transfer_code ?? null, status: body.data?.status ?? "pending" };
+}
+
 /**
  * Verifies the `x-paystack-signature` header: HMAC-SHA512 of the raw request
  * body keyed with the secret. Must run against the raw body, never a

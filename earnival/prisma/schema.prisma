@@ -20,15 +20,33 @@ datasource db {
 // Identity
 // ============================================================
 
+/// The trust ladder (PRD §6.1). Each level raises the per-event revenue cap,
+/// unlocks capability, and speeds up settlement.
+enum VerificationLevel {
+  /// Email verified. Free events publish; paid events need admin approval.
+  L0
+  /// Phone verified. Auto-approval, may create and connect shops.
+  L1
+  /// Government identity (BVN or NIN). Daily settlement.
+  L2
+  /// Registered business (CAC + TIN). Verification badge, unlimited revenue.
+  L3
+}
+
 model User {
   id            String    @id @default(cuid())
   email         String    @unique
   name          String?
   phone         String?
   emailVerified DateTime?
+  phoneVerified DateTime?
   isAdmin       Boolean   @default(false)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+
+  verificationLevel VerificationLevel @default(L0)
+  /// Granted only on completing every stage through L3 (PRD §6.1).
+  verificationBadge Boolean           @default(false)
 
   sessions       Session[]
   events         Event[]         @relation("OrganiserEvents")
@@ -38,6 +56,54 @@ model User {
   payoutAccounts PayoutAccount[]
   ledgerEntries  LedgerEntry[]
   settlements    Settlement[]
+  verifications  VerificationSubmission[]
+  reviewedEvents Event[]         @relation("EventReviewer")
+}
+
+enum KycKind {
+  PHONE
+  BVN
+  NIN
+  CAC_TIN
+}
+
+enum KycStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+/// Evidence submitted to climb the ladder.
+///
+/// PRD VRF-07 / NDPR: BVN, NIN and TIN are sensitive personal data. The raw
+/// identifier is encrypted at rest with a key separate from the database
+/// (`KYC_SECRET`) and is never selected into ordinary queries — reviewers and
+/// the UI see only `last4`. Decryption is deliberately a single, auditable
+/// function in `src/lib/verification.ts`.
+model VerificationSubmission {
+  id     String @id @default(cuid())
+  userId String
+  kind   KycKind
+  /// Level this submission is evidence for.
+  targetLevel VerificationLevel
+
+  /// Last four digits, safe to display to reviewers and the owner.
+  last4            String?
+  /// AES-256-GCM payload as iv:tag:ciphertext. Never logged, never returned.
+  encryptedPayload String?
+  /// Business names are public record, so they need no encryption.
+  businessName     String?
+
+  status          KycStatus @default(PENDING)
+  reviewedById    String?
+  reviewedAt      DateTime?
+  rejectionReason String?
+  createdAt       DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
 }
 
 model Session {
@@ -52,17 +118,25 @@ model Session {
   @@index([userId])
 }
 
-/// Passwordless sign-in codes. Only the hash is stored, never the code itself.
+enum OtpChannel {
+  EMAIL
+  PHONE
+}
+
+/// One-time codes for sign-in (email) and phone verification. Only the hash is
+/// stored, never the code itself.
 model OtpCode {
-  id         String    @id @default(cuid())
+  id         String     @id @default(cuid())
+  /// Email address or phone number, depending on `channel`.
   email      String
+  channel    OtpChannel @default(EMAIL)
   codeHash   String
   expiresAt  DateTime
   consumedAt DateTime?
-  attempts   Int       @default(0)
-  createdAt  DateTime  @default(now())
+  attempts   Int        @default(0)
+  createdAt  DateTime   @default(now())
 
-  @@index([email])
+  @@index([email, channel])
 }
 
 /// Validated bank account that settlements pay into.
@@ -75,9 +149,12 @@ model PayoutAccount {
   accountName   String
   verified      Boolean  @default(false)
   isDefault     Boolean  @default(false)
+  /// Paystack transfer recipient code, created once and reused per payout.
+  recipientCode String?
   createdAt     DateTime @default(now())
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  settlements Settlement[]
 
   @@index([userId])
 }
@@ -121,6 +198,16 @@ model Event {
   serviceFeeBps    Int @default(750)
   processingFeeBps Int @default(150)
 
+  /// PRD VRF-05: the organiser's level cap at publish time. NULL means
+  /// unlimited (L3). Snapshot so a later downgrade cannot retroactively
+  /// invalidate sales already made.
+  revenueCapKobo Int?
+
+  approvalStatus  ApprovalStatus @default(AUTO_APPROVED)
+  reviewedById    String?
+  reviewedAt      DateTime?
+  rejectionReason String?
+
   publishedAt DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -131,9 +218,21 @@ model Event {
   orders        Order[]
   payments      Payment[]
   ledgerEntries LedgerEntry[]
+  reviewedBy    User?         @relation("EventReviewer", fields: [reviewedById], references: [id])
 
   @@index([status, startsAt])
   @@index([organiserId])
+  @@index([approvalStatus])
+}
+
+/// PRD VRF-01 / EVT-10: paid events from unverified organisers are reviewed
+/// by an Earnival admin before they can sell.
+enum ApprovalStatus {
+  /// Organiser's level grants auto-approval.
+  AUTO_APPROVED
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
 }
 
 model TicketType {
@@ -326,6 +425,8 @@ enum OrderStatus {
   READY
   COMPLETED
   CANCELLED
+  PARTIALLY_REFUNDED
+  REFUNDED
 }
 
 enum PaymentMethod {
@@ -380,6 +481,7 @@ model Order {
   payment       Payment?      @relation(fields: [paymentId], references: [id])
   items         OrderItem[]
   ledgerEntries LedgerEntry[]
+  refunds       Refund[]
 
   @@index([shopId, status])
   @@index([eventId])
@@ -457,6 +559,7 @@ model Payment {
   tickets       Ticket[]
   orders        Order[]
   ledgerEntries LedgerEntry[]
+  refunds       Refund[]
 
   @@index([status])
   @@index([buyerEmail])
@@ -482,7 +585,13 @@ enum LedgerAccount {
   ORGANISER_TICKET_NET
   APPLICATION_FEE
   BOOTH_FEE
+  /// Cash actually returned to a buyer.
   REFUND
+  /// Processing fee Earnival absorbs on a refund, because the processor does
+  /// not return it but the buyer is made whole anyway.
+  PROCESSING_FEE_ABSORBED
+  /// Money moved out to a party's bank account by a settlement run.
+  PAYOUT
 }
 
 /// Append-only. Rows are NEVER updated or deleted; corrections are new
@@ -501,6 +610,7 @@ model LedgerEntry {
   eventId      String?
   shopId       String?
   settlementId String?
+  refundId     String?
 
   description String
   createdAt   DateTime @default(now())
@@ -511,11 +621,73 @@ model LedgerEntry {
   event      Event?      @relation(fields: [eventId], references: [id])
   shop       Shop?       @relation(fields: [shopId], references: [id])
   settlement Settlement? @relation(fields: [settlementId], references: [id])
+  refund     Refund?     @relation(fields: [refundId], references: [id])
 
   @@index([partyId, settlementId])
   @@index([paymentId])
   @@index([eventId])
   @@index([account])
+  @@index([refundId])
+}
+
+// ============================================================
+// Refunds
+// ============================================================
+
+enum RefundStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum RefundReason {
+  BUYER_REQUEST
+  EVENT_CANCELLED
+  ORDER_CANCELLED
+  VENDOR_UNABLE_TO_FULFIL
+  DUPLICATE_CHARGE
+  OTHER
+}
+
+/// A return of money to a buyer.
+///
+/// Refunds never mutate the original ledger entries. They append contra-entries
+/// that debit each party who was credited, so a party's balance is still the
+/// plain sum of their rows.
+model Refund {
+  id        String @id @default(cuid())
+  reference String @unique
+
+  paymentId String
+  /// Set when refunding one shop's order out of a multi-shop basket.
+  orderId   String?
+
+  /// Total returned to the buyer, including the processing fee they paid.
+  amountKobo        Int
+  /// Goods value being reversed off the selling parties.
+  goodsKobo         Int
+  /// Processing portion returned to the buyer but not recoverable from the
+  /// processor — Earnival absorbs it.
+  processingFeeKobo Int
+
+  reason RefundReason
+  note   String?
+  status RefundStatus @default(PENDING)
+
+  providerReference String?
+  failureReason     String?
+
+  requestedById String?
+  createdAt     DateTime  @default(now())
+  completedAt   DateTime?
+
+  payment       Payment       @relation(fields: [paymentId], references: [id])
+  order         Order?        @relation(fields: [orderId], references: [id])
+  ledgerEntries LedgerEntry[]
+
+  @@index([paymentId])
+  @@index([status])
 }
 
 enum SettlementStatus {
@@ -526,23 +698,27 @@ enum SettlementStatus {
 }
 
 model Settlement {
-  id        String           @id @default(cuid())
-  reference String           @unique
-  partyId   String
+  id         String           @id @default(cuid())
+  reference  String           @unique
+  partyId    String
   amountKobo Int
-  status    SettlementStatus @default(PENDING)
+  status     SettlementStatus @default(PENDING)
 
   payoutAccountId String?
-  periodStart     DateTime
-  periodEnd       DateTime
-  paidAt          DateTime?
-  failureReason   String?
-  createdAt       DateTime  @default(now())
+  /// Paystack transfer code, returned when the transfer is initiated.
+  providerTransferCode String?
+  periodStart          DateTime
+  periodEnd            DateTime
+  paidAt               DateTime?
+  failureReason        String?
+  createdAt            DateTime  @default(now())
 
-  party   User          @relation(fields: [partyId], references: [id])
-  entries LedgerEntry[]
+  party        User           @relation(fields: [partyId], references: [id])
+  payoutAccount PayoutAccount? @relation(fields: [payoutAccountId], references: [id])
+  entries      LedgerEntry[]
 
   @@index([partyId, status])
+  @@index([status])
 }
 
 // ============================================================

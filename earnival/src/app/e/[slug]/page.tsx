@@ -75,7 +75,12 @@ export default async function EventPage({ params }: Props) {
   const { slug } = await params;
   const event = await loadEvent(slug);
 
-  if (!event || (event.status !== "LIVE" && event.status !== "ENDED")) notFound();
+  if (!event) notFound();
+  if (event.status === "DRAFT") notFound();
+
+  const cancelled = event.status === "CANCELLED";
+  const awaitingReview = event.approvalStatus === "PENDING_REVIEW";
+  const onSale = event.status === "LIVE" && !awaitingReview && !cancelled;
 
   const shops = event.connections.map((c) => c.shop);
   const soldOut = event.ticketTypes.every(
@@ -97,7 +102,15 @@ export default async function EventPage({ params }: Props) {
           <Wordmark className="!text-white [&>span]:text-marigold" />
         </div>
         <div className="absolute bottom-3 left-4 right-4 text-white">
-          <Chip tone="gold">{event.status === "LIVE" ? "Live" : "Ended"}</Chip>
+          <Chip tone={cancelled ? "flame" : awaitingReview ? "line" : "gold"}>
+            {cancelled
+              ? "Cancelled"
+              : awaitingReview
+                ? "Under review"
+                : event.status === "LIVE"
+                  ? "Live"
+                  : "Ended"}
+          </Chip>
           <h1 className="mt-1 font-display text-[21px] font-extrabold leading-tight">
             {event.name}
           </h1>
@@ -126,9 +139,27 @@ export default async function EventPage({ params }: Props) {
           <p className="mt-3 text-[13px] leading-relaxed text-mute">{event.description}</p>
         )}
 
+        {cancelled && (
+          <div className="mt-4 rounded-2xl bg-[#FFE7DC] px-4 py-3 text-[13px] text-[#B23A0A]">
+            <b>This event has been cancelled.</b> Everyone who bought a ticket or
+            placed an order has been refunded automatically.
+          </div>
+        )}
+
+        {awaitingReview && (
+          <div className="mt-4 rounded-2xl bg-[#FFF1D2] px-4 py-3 text-[13px] text-[#8a5f00]">
+            <b>Awaiting review.</b> This event isn&apos;t on sale yet — our team is
+            checking it over. It usually takes a few hours.
+          </div>
+        )}
+
         <h2 className="mt-5 font-display text-[15px] font-bold">Tickets</h2>
         {event.ticketTypes.length === 0 ? (
           <p className="mt-2 text-[13px] text-mute">No tickets on sale yet.</p>
+        ) : !onSale ? (
+          <div className="mt-2 rounded-2xl border-[1.5px] border-line bg-white px-4 py-4 text-center text-[13px] text-mute">
+            {cancelled ? "Sales have closed." : "Not on sale yet."}
+          </div>
         ) : soldOut ? (
           <div className="mt-2 rounded-2xl border-[1.5px] border-line bg-white px-4 py-4 text-center text-[13px] text-mute">
             Every ticket is gone. 🎟️
@@ -179,7 +210,7 @@ export default async function EventPage({ params }: Props) {
           </ul>
         )}
 
-        {event.ticketTypes.length > 0 && !soldOut && (
+        {event.ticketTypes.length > 0 && !soldOut && onSale && (
           <p className="mt-4 text-[11px] text-mute">
             Tickets from{" "}
             <Money

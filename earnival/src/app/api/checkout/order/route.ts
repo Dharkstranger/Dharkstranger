@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import {
   CheckoutError,
+  RevenueCapError,
   SoldOutError,
   createProductCheckout,
   settlePayment,
@@ -83,7 +84,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ redirectUrl: init.authorizationUrl });
   } catch (error) {
-    if (error instanceof SoldOutError) {
+    if (error instanceof SoldOutError || error instanceof RevenueCapError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
     if (error instanceof CheckoutError) {

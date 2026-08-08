@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { generateTicketCode, generateSku, generatePaymentReference } from "../src/lib/ids";
 import { issueTicketToken } from "../src/lib/qr";
 import { nairaToKobo, splitTicketSale, ledgerLinesForTickets } from "../src/lib/money";
+import { LEVELS } from "../src/lib/verification";
 
 const db = new PrismaClient();
 
@@ -12,6 +13,8 @@ async function main() {
 
   // Clean slate, children first.
   await db.ledgerEntry.deleteMany();
+  await db.refund.deleteMany();
+  await db.settlement.deleteMany();
   await db.orderItem.deleteMany();
   await db.order.deleteMany();
   await db.ticket.deleteMany();
@@ -21,25 +24,71 @@ async function main() {
   await db.ticketType.deleteMany();
   await db.shop.deleteMany();
   await db.event.deleteMany();
+  await db.verificationSubmission.deleteMany();
+  await db.payoutAccount.deleteMany();
   await db.session.deleteMany();
   await db.otpCode.deleteMany();
+  await db.webhookEvent.deleteMany();
+  await db.idempotencyKey.deleteMany();
   await db.user.deleteMany();
 
+  // L2: identity verified, so daily settlement and a ₦5m per-event cap.
   const organiser = await db.user.create({
     data: {
       email: "organiser@earnival.app",
       name: "Emeka Ugochukwu",
-      phone: "+234 801 111 2222",
+      phone: "+2348011112222",
       emailVerified: new Date(),
+      phoneVerified: new Date(),
+      verificationLevel: "L2",
+      isAdmin: true,
+      payoutAccounts: {
+        create: {
+          bankCode: "058",
+          bankName: "Guaranty Trust Bank",
+          accountNumber: "0123456789",
+          accountName: "EMEKA UGOCHUKWU",
+          verified: true,
+          isDefault: true,
+        },
+      },
+      verifications: {
+        create: [
+          { kind: "PHONE", targetLevel: "L1", last4: "2222", status: "APPROVED", reviewedAt: new Date() },
+          { kind: "BVN", targetLevel: "L2", last4: "4321", status: "APPROVED", reviewedAt: new Date() },
+        ],
+      },
     },
   });
 
+  // L1: phone verified — can run a shop, settles after each event.
   const amara = await db.user.create({
     data: {
       email: "amara@earnival.app",
       name: "Amara N.",
-      phone: "+234 801 234 5678",
+      phone: "+2348012345678",
       emailVerified: new Date(),
+      phoneVerified: new Date(),
+      verificationLevel: "L1",
+      payoutAccounts: {
+        create: {
+          bankCode: "044",
+          bankName: "Access Bank",
+          accountNumber: "0987654321",
+          accountName: "AMARA NWOSU",
+          verified: true,
+          isDefault: true,
+        },
+      },
+      verifications: {
+        create: {
+          kind: "PHONE",
+          targetLevel: "L1",
+          last4: "5678",
+          status: "APPROVED",
+          reviewedAt: new Date(),
+        },
+      },
     },
   });
 
@@ -47,8 +96,20 @@ async function main() {
     data: {
       email: "tunde@earnival.app",
       name: "Tunde A.",
-      phone: "+234 802 000 1122",
+      phone: "+2348020001122",
       emailVerified: new Date(),
+      phoneVerified: new Date(),
+      verificationLevel: "L1",
+    },
+  });
+
+  // L0: brand new, so paid events queue for review and shops are locked.
+  const rookie = await db.user.create({
+    data: {
+      email: "rookie@earnival.app",
+      name: "Chinedu Okafor",
+      emailVerified: new Date(),
+      verificationLevel: "L0",
     },
   });
 
@@ -64,6 +125,8 @@ async function main() {
       endsAt: new Date("2026-12-20T02:00:00+01:00"),
       organiserNote: "Gates open 2pm sharp. Bring a valid ID. No outside drinks.",
       status: "LIVE",
+      approvalStatus: "AUTO_APPROVED",
+      revenueCapKobo: LEVELS.L2.revenueCapKobo,
       publishedAt: new Date(),
       organiserId: organiser.id,
       ticketTypes: {
@@ -76,6 +139,28 @@ async function main() {
     include: { ticketTypes: true },
   });
 
+  // An L0 organiser's paid event, sitting in the admin queue.
+  await db.event.create({
+    data: {
+      slug: "rookie-rooftop",
+      name: "Rooftop Sundowner",
+      category: "Party",
+      description: "First time running something. Small, warm, good music.",
+      venue: "Victoria Island, Lagos",
+      startsAt: new Date("2026-10-03T17:00:00+01:00"),
+      status: "LIVE",
+      approvalStatus: "PENDING_REVIEW",
+      revenueCapKobo: LEVELS.L0.revenueCapKobo,
+      publishedAt: new Date(),
+      organiserId: rookie.id,
+      ticketTypes: {
+        create: [
+          { name: "Entry", priceKobo: nairaToKobo(5_000), quantity: 80, sortOrder: 0 },
+        ],
+      },
+    },
+  });
+
   const secondEvent = await db.event.create({
     data: {
       slug: "lagos-art-week",
@@ -85,6 +170,8 @@ async function main() {
       venue: "Alliance Française, Ikoyi, Lagos",
       startsAt: new Date("2026-11-06T18:00:00+01:00"),
       status: "LIVE",
+      approvalStatus: "AUTO_APPROVED",
+      revenueCapKobo: LEVELS.L2.revenueCapKobo,
       publishedAt: new Date(),
       organiserId: organiser.id,
       ticketTypes: {
@@ -258,14 +345,15 @@ async function main() {
   console.log(`
 ✓ Seeded.
 
-  Events   ${event.slug}, ${secondEvent.slug}
+  Events   ${event.slug}, ${secondEvent.slug}, rookie-rooftop (awaiting review)
   Shops    ${grill.slug} (connected), ${threads.slug} (pending)
   Tickets  ${attendees.length} sold, 2 checked in
 
   Sign in as any of these — the 6-digit code prints in the server log:
-    organiser@earnival.app   (organiser, owns both events)
-    amara@earnival.app       (vendor, connected shop)
-    tunde@earnival.app       (vendor, pending request)
+    organiser@earnival.app   L2 · admin · owns both live events · bank on file
+    amara@earnival.app       L1 · vendor with a connected shop · bank on file
+    tunde@earnival.app       L1 · vendor with a pending request
+    rookie@earnival.app      L0 · paid event stuck in the admin queue
 `);
 }
 

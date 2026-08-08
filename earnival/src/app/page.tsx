@@ -10,7 +10,12 @@ export const dynamic = "force-dynamic";
 export default async function HomePage() {
   const [events, user] = await Promise.all([
     db.event.findMany({
-      where: { status: "LIVE", visibility: "PUBLIC" },
+      // Events still awaiting admin review never appear in discovery.
+      where: {
+        status: "LIVE",
+        visibility: "PUBLIC",
+        approvalStatus: { in: ["AUTO_APPROVED", "APPROVED"] },
+      },
       orderBy: { startsAt: "asc" },
       take: 20,
       include: {

@@ -48,10 +48,33 @@ export default async function DashboardPage() {
           <Link href="/dashboard/events/new" className={btnClass("flame")}>
             New event
           </Link>
-          <Link href={shop ? "/shop" : "/shop"} className={btnClass("quiet")}>
+          <Link href="/shop" className={btnClass("quiet")}>
             {shop ? "My shop" : "Open a shop"}
           </Link>
+          <Link href="/payouts" className={btnClass("quiet", { small: true })}>
+            Payouts
+          </Link>
+          <Link href="/verify" className={btnClass("quiet", { small: true })}>
+            Verification · {user.verificationLevel}
+          </Link>
         </div>
+
+        {user.isAdmin && (
+          <Link
+            href="/admin"
+            className="mt-2 block rounded-2xl bg-plum px-4 py-2.5 text-center text-[13px] font-semibold text-white"
+          >
+            Admin console
+          </Link>
+        )}
+
+        {user.verificationLevel === "L0" && (
+          <div className="mt-3 rounded-2xl bg-[#FFF1D2] px-3.5 py-2.5 text-[12px] text-[#8a5f00]">
+            <b>You&apos;re on L0.</b> Paid events need our review before they sell,
+            and you can&apos;t open a shop yet. Verify your phone to lift both —
+            it takes a minute.
+          </div>
+        )}
 
         <h2 className="mb-2 mt-6 font-display text-[15px] font-bold">Your events</h2>
 

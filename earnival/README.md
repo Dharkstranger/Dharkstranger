@@ -29,10 +29,14 @@ the core loop:
 | Offline-tolerant check-in queue | ✅ |
 | Append-only money ledger with exact splits | ✅ |
 | Passwordless email OTP auth + guest purchase claiming | ✅ |
+| Verification ladder L0–L3 with caps and entitlements | ✅ |
+| Admin approval queue for events and KYC | ✅ |
+| Refunds — full, partial, and event cancellation | ✅ |
+| Settlement engine with real Paystack transfers | ✅ |
 
-Deliberately **not** in this cut (Phase 2–3 in the PRD): verification ladder
-L0–L3, plan tiers, wallet, cohosts, series, booths, ad space, chatrooms,
-shop-to-shop transfer, Earnit, group checkout.
+Deliberately **not** in this cut (Phase 2–3 in the PRD): plan tiers, wallet,
+cohosts, series, booths, ad space, chatrooms, shop-to-shop transfer, Earnit,
+group checkout.
 
 ---
 
@@ -67,7 +71,70 @@ not a double credit.
 
 **5. Order status is workflow; `LedgerEntry` is truth.**
 The ledger is append-only. Balances are always the sum of entries, never a
-stored number that can drift.
+stored number that can drift. Refunds append contra-entries rather than editing
+history, and settlement claims entries with a `settlementId IS NULL` filter, so
+no earning can be paid twice.
+
+---
+
+## Trust, refunds and money out
+
+### The verification ladder
+
+| Level | How | Cap per event | Unlocks | Settlement |
+|---|---|---|---|---|
+| L0 | Email verified | ₦500,000 | Free events publish instantly; paid events go to admin review | After the event |
+| L1 | Phone verified | ₦1,000,000 | Paid events publish instantly; can open and connect a shop | After the event |
+| L2 | BVN or NIN | ₦5,000,000 | — | Daily |
+| L3 | CAC + TIN | Unlimited | Verified badge | Daily |
+
+Caps are enforced inside the checkout transaction and count in-flight
+reservations, so concurrent buyers cannot straddle the limit. The cap is
+snapshot onto the event at publish, so a later level change never invalidates
+sales already made.
+
+**Sensitive data (VRF-07 / NDPR).** BVN, NIN and TIN are encrypted with
+AES-256-GCM under `KYC_SECRET` — a key deliberately separate from
+`AUTH_SECRET`, so a leaked session key cannot expose identity data. Only the
+last four digits are stored in the clear; reviewers never see the full value.
+`decryptSensitive` is the single audited path to plaintext.
+
+### Refunds (PRD Decision #9, resolved)
+
+**Policy: the buyer is made whole.** Earnival reverses its 7.5% service charge
+and the organiser's connection share off whoever was credited. The payment
+processor keeps its ~1.5% fee, so Earnival absorbs that — booked explicitly as
+`PROCESSING_FEE_ABSORBED` rather than quietly written off.
+
+On a ₦13,000 order that means: vendor nets 0, organiser nets 0, platform is out
+₦195. Stock returns, seats return to the pool, and the order is marked
+`REFUNDED`. Partial refunds work the same way, proportionally.
+
+Refunds are blocked after check-in or collection — the goods were delivered.
+Cancelling an event refunds every outstanding ticket and order in one action.
+
+Policy lives in `REFUND_POLICY` at the top of `src/lib/refunds.ts` if any of
+those calls need changing.
+
+### Settlement
+
+`runSettlements()` finds everyone owed money, works out which earnings are due
+under their cadence, claims those ledger entries, and transfers via Paystack.
+
+- **Post-event (L0–L1):** only earnings from events that have finished.
+- **Daily (L2–L3):** everything from before today, so payouts cover whole days.
+- Payouts land T+1 after the trigger. Minimum ₦100.
+- A negative balance (refunds exceeding sales) is never paid out and carries
+  forward.
+- No verified bank account means no payout, and the earnings stay untouched.
+- Failed or reversed transfers release their entries back into the payable pool
+  for the next run.
+
+Run it on a schedule:
+
+```bash
+curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://…/api/cron/settle
+```
 
 ---
 
@@ -88,9 +155,10 @@ Open http://localhost:3000. The seed prints three sign-in identities; **the
 configured.
 
 ```
-organiser@earnival.app   organiser, owns both seeded events
-amara@earnival.app       vendor with a connected shop
-tunde@earnival.app       vendor with a pending connection request
+organiser@earnival.app   L2 · admin · owns both live events · bank on file
+amara@earnival.app       L1 · vendor with a connected shop · bank on file
+tunde@earnival.app       L1 · vendor with a pending connection request
+rookie@earnival.app      L0 · paid event sitting in the admin queue
 ```
 
 ### Environment
@@ -101,10 +169,14 @@ tunde@earnival.app       vendor with a pending connection request
 | `APP_URL` | yes | Public origin; used in QR payloads and emails |
 | `AUTH_SECRET` | yes | `openssl rand -hex 32` |
 | `QR_SECRET` | yes | `openssl rand -hex 32`. **Rotating it invalidates every issued ticket QR.** |
+| `KYC_SECRET` | yes | `openssl rand -hex 32`. Encrypts BVN/NIN/TIN. **Rotating it makes existing identity records undecryptable.** Keep it separate from `AUTH_SECRET`. |
 | `PAYSTACK_SECRET_KEY` | production | Without it the app runs in sandbox mode |
 | `PAYSTACK_PUBLIC_KEY` | production | |
+| `CRON_SECRET` | production | Bearer token guarding `/api/cron/settle` |
 | `RESEND_API_KEY` | no | Falls back to logging emails to the console |
 | `EMAIL_FROM` | no | |
+| `TERMII_API_KEY` | no | SMS for phone verification; falls back to the console |
+| `TERMII_SENDER_ID` | no | |
 
 ### Sandbox mode
 
@@ -119,10 +191,15 @@ payment keys is a broken deploy, not a simulated one.
 npm test
 ```
 
-33 tests: 25 unit tests on the money engine (including the PRD §8 worked
-example) and 8 integration tests against a real Postgres covering oversell
-races, webhook idempotency, reservation expiry, QR forgery and connection
-enforcement.
+52 tests:
+
+- **25 unit tests** on the money engine, including the PRD §8 worked example and
+  a ~300-combination invariant sweep.
+- **8 integration tests** on the commerce loop: oversell races, webhook
+  idempotency, reservation expiry, QR forgery, connection enforcement.
+- **19 integration tests** on trust and money-out: KYC encryption, level
+  progression, revenue caps, refund reconciliation, stock and seat restoration,
+  event cancellation, payout idempotency, negative-balance hold-back.
 
 ---
 
@@ -140,20 +217,34 @@ enforcement.
 
 ## Before this takes real money
 
-Three PRD decisions are still open and block correct payouts. The code is
-written so each is a small, localised change:
+Resolved and implemented:
 
-- **Decision #9 — refund policy.** There is no refund path at all. Everything
-  else assumes money only flows forward.
+- **Decision #8 — L2/L3 caps.** L2 ₦5m, L3 unlimited.
+- **Decision #9 — refund policy.** Buyer made whole; Earnival absorbs the
+  processor's fee.
+
+Still open:
+
 - **Decision #12 — split order of operations.** Implemented as configurable
   (`DEFAULT_SHARE_BASIS` in `money.ts`), currently `GROSS` to match the PRD's
   worked example. Flip the constant once Finance decides.
 - **Decision #22 — commission when shops sell event tickets.** Not implemented;
   connected shops don't sell tickets yet.
+- **Decision #13 — pre-event ticket payouts.** Post-event cadence sidesteps this
+  for L0–L1, but daily settlement at L2+ pays out ticket revenue before the
+  event happens. Confirm that is acceptable to the CBN before going live.
 
-Also outstanding before launch: NDPR privacy policy and consent capture, terms of
-service, and a real settlement/payout job that pays the `Settlement` table out
-to bank accounts (the table and balances exist; the disbursement call does not).
+Also outstanding before launch:
+
+- NDPR privacy policy, terms of service, and consent capture at sign-up. The
+  encryption and access controls are built; the legal surface is not.
+- A **DPIA before L2 ships**, per the PRD's own risk table — you will be
+  collecting BVN and NIN.
+- Truecaller is not wired for L1; phone OTP alone stands in for it.
+- SMS has no provider configured (`TERMII_API_KEY`), so verification codes
+  currently print to the server log.
+- Paystack Transfers must be enabled on the account, and the balance must be
+  funded, before settlements can actually pay out.
 
 ---
 
@@ -162,8 +253,11 @@ to bank accounts (the table and balances exist; the disbursement call does not).
 ```
 prisma/schema.prisma      Data model; every money field is integer kobo
 src/lib/money.ts          Fee and split maths — pure, exhaustively tested
-src/lib/commerce.ts       Checkout, reservations, settlement, fulfilment
-src/lib/paystack.ts       Payment provider + webhook signature verification
+src/lib/commerce.ts       Checkout, reservations, payment settlement, fulfilment
+src/lib/refunds.ts        Refund policy and ledger contra-entries
+src/lib/settlement.ts     Payout runs, transfers, bank accounts
+src/lib/verification.ts   L0–L3 ladder, caps, KYC encryption
+src/lib/paystack.ts       Payments, refunds, transfers, webhook signatures
 src/lib/qr.ts             HMAC-signed ticket tokens and real QR rendering
 src/lib/ledger.ts         Balance and reporting queries
 src/lib/checkin-client.ts Offline-tolerant check-in queue
@@ -172,4 +266,8 @@ src/app/s/[slug]          Public shop storefront
 src/app/t/[token]         Ticket badge with scannable QR
 src/app/dashboard         Organiser console + scanner
 src/app/shop              Vendor console
+src/app/verify            Verification ladder
+src/app/payouts           Bank account + settlement history
+src/app/admin             Approval queues and money operations
+src/app/api/cron/settle   Scheduled payout + reservation cleanup
 ```

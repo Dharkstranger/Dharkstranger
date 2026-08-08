@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { createTicketCheckout, settlePayment, SoldOutError, CheckoutError } from "@/lib/commerce";
+import {
+  CheckoutError,
+  RevenueCapError,
+  SoldOutError,
+  createTicketCheckout,
+  settlePayment,
+} from "@/lib/commerce";
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { initializeTransaction } from "@/lib/paystack";
@@ -74,6 +80,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ redirectUrl: init.authorizationUrl });
   } catch (error) {
     if (error instanceof SoldOutError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    if (error instanceof RevenueCapError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
     if (error instanceof CheckoutError) {

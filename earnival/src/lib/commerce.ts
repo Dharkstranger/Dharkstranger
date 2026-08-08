@@ -23,9 +23,44 @@ import {
   sendEmail,
   ticketEmail,
 } from "./mail";
+import { checkRevenueCap } from "./verification";
 
 export class SoldOutError extends Error {}
 export class CheckoutError extends Error {}
+/** Raised when a sale would push an event past its verification-level cap. */
+export class RevenueCapError extends Error {}
+
+/** PRD VRF-01: an unapproved paid event may not sell. */
+function assertApprovedForSale(approvalStatus: string): void {
+  if (approvalStatus === "PENDING_REVIEW") {
+    throw new CheckoutError("This event is awaiting review and isn't on sale yet");
+  }
+  if (approvalStatus === "REJECTED") {
+    throw new CheckoutError("This event isn't available");
+  }
+}
+
+/**
+ * PRD VRF-05: caps are enforced per event, whatever the sale channel. The
+ * check runs inside the checkout transaction and counts in-flight
+ * reservations, so concurrent buyers cannot straddle the limit.
+ */
+async function assertWithinCap(
+  tx: Tx,
+  eventId: string,
+  incomingKobo: number,
+): Promise<void> {
+  const cap = await checkRevenueCap(eventId, incomingKobo, tx);
+  if (!cap.wouldExceed) return;
+
+  throw new RevenueCapError(
+    cap.remainingKobo && cap.remainingKobo > 0
+      ? `This event has ${formatNaira(cap.remainingKobo)} of its revenue limit left. ` +
+        `Reduce the amount, or ask the organiser to verify their account to raise the limit.`
+      : `This event has reached its revenue limit of ${formatNaira(cap.capKobo ?? 0)}. ` +
+        `The organiser needs to verify their account to keep selling.`,
+  );
+}
 
 /** How long an unpaid checkout holds its inventory. */
 const RESERVATION_TTL_MINUTES = 20;
@@ -152,7 +187,11 @@ export async function createTicketCheckout(
       include: { ticketTypes: true },
     });
     if (!event) throw new CheckoutError("Event not found");
+    if (event.status === "CANCELLED") {
+      throw new CheckoutError("This event has been cancelled");
+    }
     if (event.status !== "LIVE") throw new CheckoutError("This event isn't on sale");
+    assertApprovedForSale(event.approvalStatus);
 
     // Prices always come from the database. Anything the client sent about
     // price is ignored outright.
@@ -164,6 +203,8 @@ export async function createTicketCheckout(
       subtotalKobo += type.priceKobo * line.quantity;
       return { type, quantity: line.quantity };
     });
+
+    await assertWithinCap(tx, event.id, subtotalKobo);
 
     for (const line of resolved) {
       await reserveTicketInventory(tx, line.type.id, line.quantity);
@@ -252,6 +293,12 @@ export async function createProductCheckout(
       ? await tx.event.findUnique({ where: { slug: eventSlug } })
       : null;
     if (eventSlug && !event) throw new CheckoutError("Event not found");
+    if (event) {
+      if (event.status === "CANCELLED") {
+        throw new CheckoutError("This event has been cancelled");
+      }
+      assertApprovedForSale(event.approvalStatus);
+    }
 
     const products = await tx.product.findMany({
       where: { id: { in: items.map((i) => i.productId) } },
@@ -316,6 +363,9 @@ export async function createProductCheckout(
     });
 
     const grandSubtotal = shopTotals.reduce((a, s) => a + s.subtotal, 0);
+    // Product sales count against the event's cap alongside ticket revenue.
+    if (event) await assertWithinCap(tx, event.id, grandSubtotal);
+
     const processingFeeBps = event?.processingFeeBps ?? 150;
     const totals = buyerTotal(grandSubtotal, payNow ? processingFeeBps : 0);
 
