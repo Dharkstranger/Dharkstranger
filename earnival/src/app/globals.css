@@ -1,0 +1,51 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  html {
+    background: #141018;
+  }
+
+  body {
+    background: #faf6ef;
+    color: #1c1030;
+  }
+
+  input[type="date"],
+  input[type="time"],
+  input[type="number"] {
+    font-family: var(--font-mono), monospace;
+  }
+
+  /* Keyboard focus stays visible; the prototype removed outlines entirely. */
+  :focus-visible {
+    outline: 2px solid #5b2a9e;
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-white rounded-2xl border-[1.5px] border-line;
+  }
+
+  .field {
+    @apply w-full rounded-2xl px-4 py-3 text-[15px] bg-white border-[1.5px] border-line outline-none;
+  }
+
+  .label {
+    @apply text-[11px] font-bold uppercase tracking-wider text-mute mb-1.5;
+  }
+}
+
+/* Dashed tear-off edge on settlement receipts. */
+.receipt-teeth {
+  background-image: radial-gradient(circle at 6px 0, transparent 6px, #fff 6px);
+  background-size: 12px 12px;
+  background-repeat: repeat-x;
+}
