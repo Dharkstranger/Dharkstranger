@@ -56,12 +56,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   return {
     title: event.name,
     description,
+    // The card image itself comes from opengraph-image.tsx alongside this file.
     openGraph: {
       title: event.name,
       description,
       type: "website",
       url: `/e/${event.slug}`,
-      images: event.bannerUrl ? [{ url: event.bannerUrl }] : undefined,
     },
     twitter: {
       card: "summary_large_image",
@@ -97,9 +97,19 @@ export default async function EventPage({ params }: Props) {
 
   return (
     <div className="pb-28">
-      <div className="relative h-44 bg-gradient-to-br from-night via-plum to-flame">
+      <div className="relative h-52 bg-gradient-to-br from-night via-plum to-flame sm:h-64">
+        {event.bannerUrl && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={event.bannerUrl}
+            alt=""
+            className="absolute inset-0 h-full w-full object-cover"
+          />
+        )}
+        {/* Scrim keeps the title legible over any photograph. */}
+        <div className="absolute inset-0 bg-gradient-to-t from-night/95 via-night/40 to-night/25" />
         <div className="absolute left-4 top-3">
-          <Wordmark className="!text-white [&>span]:text-marigold" />
+          <Wordmark className="!text-white [&>span]:!text-marigold" />
         </div>
         <div className="absolute bottom-3 left-4 right-4 text-white">
           <Chip tone={cancelled ? "flame" : awaitingReview ? "line" : "gold"}>
@@ -197,7 +207,7 @@ export default async function EventPage({ params }: Props) {
                     </span>
                     <span>
                       <span className="block text-[14px] font-semibold">{shop.name}</span>
-                      <span className="block text-[11px] text-mute">
+                      <span className="block text-[12px] text-mute">
                         {shop._count.products} products ·{" "}
                         {shop.payAtEvent ? "pay at event ok" : "pay online"}
                       </span>
@@ -211,11 +221,11 @@ export default async function EventPage({ params }: Props) {
         )}
 
         {event.ticketTypes.length > 0 && !soldOut && onSale && (
-          <p className="mt-4 text-[11px] text-mute">
+          <p className="mt-4 text-[12px] text-mute">
             Tickets from{" "}
             <Money
               kobo={Math.min(...event.ticketTypes.map((t) => t.priceKobo))}
-              className="text-[11px]"
+              className="text-[12px]"
             />{" "}
             · no account needed to buy.
           </p>

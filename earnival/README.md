@@ -33,6 +33,11 @@ the core loop:
 | Admin approval queue for events and KYC | ✅ |
 | Refunds — full, partial, and event cancellation | ✅ |
 | Settlement engine with real Paystack transfers | ✅ |
+| Event banners, product photos, generated OG cards | ✅ |
+| Lost-ticket recovery by email | ✅ |
+| WhatsApp / SMS vendor sale alerts | ✅ |
+| Rate limiting and security headers | ✅ |
+| Desktop console layouts | ✅ |
 
 Deliberately **not** in this cut (Phase 2–3 in the PRD): plan tiers, wallet,
 cohosts, series, booths, ad space, chatrooms, shop-to-shop transfer, Earnit,
@@ -138,6 +143,37 @@ curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://…/api/cron/settle
 
 ---
 
+## Security posture
+
+Attacks this codebase actively defends against, and how:
+
+| Threat | Defence |
+|---|---|
+| **Inventory denial** — scripting checkouts to hold every seat for free | Per-IP rate limit on checkout (10 / 5 min), Postgres-backed so it holds across serverless instances; reservations auto-expire |
+| **Free tickets via sandbox** | Sandbox runs only when serving from localhost or with an explicit opt-in; the process refuses to boot on a real domain without payment keys |
+| **Credential leakage through logs** | Sign-in codes, ticket links and pickup codes are never logged outside local dev; a deployed instance without a mail provider fails loudly instead |
+| **Forged payments** | Only a signature-verified webhook or server-side verify call can mark a payment successful |
+| **Stored XSS via uploads** | Image format is sniffed from magic bytes, never from the caller's `Content-Type`; only JPEG/PNG/WebP are stored, served `nosniff` |
+| **Clickjacking** | `frame-ancestors 'none'` + `X-Frame-Options: DENY` |
+| **Ticket-link leakage via referrer** | `/t/*` sends `Referrer-Policy: no-referrer`, `no-store`, and is excluded from indexing |
+| **Enumerating who bought tickets** | Lookup responds identically whether or not the address exists, and is rate limited |
+| **Identity data exposure** | BVN/NIN/TIN encrypted with AES-256-GCM under a key separate from the session secret; only last-4 ever readable |
+| **Order reference collisions** | Random 6-char suffix plus retry on constraint violation — the previous timestamp-derived scheme failed 198 of 200 same-millisecond orders |
+
+Not yet covered, and worth knowing: there is no WAF or bot detection, rate limits key on a spoofable `x-forwarded-for`, and no admin action audit log exists.
+
+## Accessibility
+
+Targets WCAG 2.2 AA:
+
+- Skip link and a single `main` landmark on every route
+- Body text no smaller than 12px; secondary text meets 4.5:1 on the paper background
+- Tap targets on quantity steppers meet the 24px minimum (they render at 36px)
+- Errors use `role="alert"` and are tied to their input with `aria-describedby` / `aria-invalid`
+- Scanner feedback is an assertive live region, plus sound and haptics
+- Pinch-zoom is never blocked; `prefers-reduced-motion` is honoured
+- Focus is always visible
+
 ## Running it
 
 Requires Node 22+ and Postgres 16+.
@@ -173,10 +209,13 @@ rookie@earnival.app      L0 · paid event sitting in the admin queue
 | `PAYSTACK_SECRET_KEY` | production | Without it the app runs in sandbox mode |
 | `PAYSTACK_PUBLIC_KEY` | production | |
 | `CRON_SECRET` | production | Bearer token guarding `/api/cron/settle` |
-| `RESEND_API_KEY` | no | Falls back to logging emails to the console |
+| `RESEND_API_KEY` | production | Console transport is local-dev only; a deployed instance refuses to send codes without it |
 | `EMAIL_FROM` | no | |
-| `TERMII_API_KEY` | no | SMS for phone verification; falls back to the console |
+| `TERMII_API_KEY` | no | SMS for phone verification and alert fallback |
 | `TERMII_SENDER_ID` | no | |
+| `WHATSAPP_TOKEN` / `WHATSAPP_PHONE_NUMBER_ID` | no | Vendor sale alerts; falls back to SMS |
+| `WHATSAPP_TEMPLATE_NAME` | no | Required by Meta for business-initiated messages |
+| `EARNIVAL_ALLOW_SANDBOX` | no | Set to `1` only for a throwaway staging environment |
 
 ### Sandbox mode
 
@@ -191,7 +230,7 @@ payment keys is a broken deploy, not a simulated one.
 npm test
 ```
 
-52 tests:
+71 tests:
 
 - **25 unit tests** on the money engine, including the PRD §8 worked example and
   a ~300-combination invariant sweep.
@@ -200,6 +239,10 @@ npm test
 - **19 integration tests** on trust and money-out: KYC encryption, level
   progression, revenue caps, refund reconciliation, stock and seat restoration,
   event cancellation, payout idempotency, negative-balance hold-back.
+- **19 regression tests** on the hardening pass — each maps to a defect that was
+  live, so a failure means a real vulnerability has returned: reference
+  collisions, rate-limit exhaustion and isolation, lookup-token forgery and
+  expiry, upload format spoofing, and the sandbox guard on a real domain.
 
 ---
 
@@ -269,5 +312,12 @@ src/app/shop              Vendor console
 src/app/verify            Verification ladder
 src/app/payouts           Bank account + settlement history
 src/app/admin             Approval queues and money operations
+src/app/find              Lost-ticket recovery by email
 src/app/api/cron/settle   Scheduled payout + reservation cleanup
+src/lib/rate-limit.ts     Postgres-backed per-client throttling
+src/lib/media.ts          Image storage; swap this to move off Postgres
+src/lib/notify.ts         WhatsApp / SMS vendor alerts
+src/lib/lookup.ts         Signed, expiring ticket-recovery links
+src/instrumentation.ts    Boot-time configuration guard
+e/[slug]/opengraph-image  Generated share cards
 ```

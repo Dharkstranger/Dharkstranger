@@ -87,7 +87,7 @@ export function OrderCard({ order }: { order: OrderView }) {
       </div>
 
       {order.pickupCode && order.status === "READY" && (
-        <div className="mt-1 text-[11px]">
+        <div className="mt-1 text-[12px]">
           <Chip tone="gold">Buyer&apos;s code {order.pickupCode}</Chip>
         </div>
       )}

@@ -81,7 +81,7 @@ export function TicketPicker({
             >
               <div>
                 <div className="text-[14px] font-semibold">{type.name}</div>
-                <div className="text-[11px] text-mute">
+                <div className="text-[12px] text-mute">
                   {soldOut ? "Sold out" : `${type.remaining} left`}
                 </div>
               </div>
@@ -90,7 +90,7 @@ export function TicketPicker({
                   {type.priceKobo === 0 ? "Free" : formatNaira(type.priceKobo)}
                 </span>
                 {soldOut ? (
-                  <span className="text-[11px] font-semibold uppercase text-mute">
+                  <span className="text-[12px] font-semibold uppercase text-mute">
                     Gone
                   </span>
                 ) : quantity > 0 ? (
@@ -99,7 +99,7 @@ export function TicketPicker({
                       type="button"
                       onClick={() => adjust(type, -1)}
                       aria-label={`Remove one ${type.name}`}
-                      className="px-1 text-lg leading-none"
+                      className="grid h-9 w-9 place-items-center text-lg leading-none"
                     >
                       −
                     </button>
@@ -111,7 +111,7 @@ export function TicketPicker({
                       onClick={() => adjust(type, 1)}
                       disabled={quantity >= type.remaining}
                       aria-label={`Add one ${type.name}`}
-                      className="px-1 text-lg leading-none disabled:opacity-30"
+                      className="grid h-9 w-9 place-items-center text-lg leading-none disabled:opacity-30"
                     >
                       +
                     </button>
@@ -212,7 +212,7 @@ export function TicketPicker({
           <button type="submit" disabled={busy} className={btnClass("flame")}>
             {busy ? "Starting checkout…" : `Pay ${formatNaira(totals.totalKobo)}`}
           </button>
-          <p className="mt-2 text-center text-[11px] text-mute">
+          <p className="mt-2 text-center text-[12px] text-mute">
             Secured by Paystack
           </p>
         </form>

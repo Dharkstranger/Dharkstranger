@@ -76,7 +76,7 @@ export default async function EventConsolePage({
     <div className="pb-16">
       <TopBar title={event.name} backHref="/dashboard" />
 
-      <div className="px-4 pt-4">
+      <div className="px-4 pt-4 lg:px-6">
         {created && (
           <div className="mb-4 rounded-2xl border-[1.5px] border-leaf bg-[#E3F0E7] p-4 text-center">
             <div className="text-2xl">🎉</div>
@@ -90,15 +90,15 @@ export default async function EventConsolePage({
         <div className="rounded-3xl bg-night p-4 text-white">
           <div className="flex items-end justify-between gap-3">
             <div>
-              <div className="text-[11px] text-[#C9BFD6]">Ticket revenue (net)</div>
+              <div className="text-[12px] text-[#C9BFD6]">Ticket revenue (net)</div>
               <Money kobo={money.ticketNetKobo} className="text-[24px] text-white" />
             </div>
             <div className="text-right">
-              <div className="text-[11px] text-[#C9BFD6]">Your share of shop sales</div>
+              <div className="text-[12px] text-[#C9BFD6]">Your share of shop sales</div>
               <Money kobo={money.organiserShareKobo} className="text-[16px] text-marigold" />
             </div>
           </div>
-          <div className="mt-2 flex flex-wrap gap-4 text-[11px] text-[#C9BFD6]">
+          <div className="mt-2 flex flex-wrap gap-4 text-[12px] text-[#C9BFD6]">
             <span>
               {checkedIn}/{tickets.length} checked in
             </span>
@@ -109,7 +109,7 @@ export default async function EventConsolePage({
           </div>
         </div>
 
-        <div className="mt-3 grid grid-cols-2 gap-2">
+        <div className="mt-3 grid grid-cols-2 gap-2 lg:max-w-md">
           <Link href={`/dashboard/events/${event.id}/scan`} className={btnClass("gold")}>
             Scan tickets
           </Link>
@@ -119,7 +119,7 @@ export default async function EventConsolePage({
         </div>
 
         {/* Share block — the distribution surface the PRD leans on. */}
-        <div className="mt-4 rounded-3xl border-[1.5px] border-line bg-white p-4 text-center">
+        <div className="mt-4 rounded-3xl border-[1.5px] border-line bg-white p-4 text-center lg:max-w-md">
           <div className="mb-2 font-display text-[15px] font-bold">Share your event</div>
           <img
             src={shareQr}
@@ -165,7 +165,7 @@ export default async function EventConsolePage({
               >
                 <div>
                   <div className="text-[14px] font-semibold">{connection.shop.name}</div>
-                  <div className="text-[11px] text-mute">
+                  <div className="text-[12px] text-mute">
                     {connection.shop._count.products} products
                   </div>
                 </div>

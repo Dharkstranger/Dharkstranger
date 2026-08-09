@@ -84,11 +84,11 @@ export default async function ShopPage() {
     <div className="pb-16">
       <TopBar title={shop.name} right={<SignOutButton />} />
 
-      <div className="px-4 pt-4">
-        <div className="rounded-3xl bg-night p-4 text-white">
-          <div className="text-[11px] text-[#C9BFD6]">Gross sales</div>
+      <div className="px-4 pt-4 lg:px-6">
+        <div className="rounded-3xl bg-night p-4 text-white lg:max-w-md">
+          <div className="text-[12px] text-[#C9BFD6]">Gross sales</div>
           <Money kobo={money.grossKobo} className="text-[26px] text-white" />
-          <div className="mt-2 flex justify-between text-[11px] text-[#C9BFD6]">
+          <div className="mt-2 flex justify-between text-[12px] text-[#C9BFD6]">
             <span>Awaiting settlement</span>
             <Money kobo={balance} className="text-[13px] text-marigold" />
           </div>
@@ -122,12 +122,27 @@ export default async function ShopPage() {
                   key={product.id}
                   className="flex items-center justify-between rounded-2xl border-[1.5px] border-line bg-white px-4 py-2.5"
                 >
-                  <span className="text-[14px] font-semibold">
-                    {product.emoji ?? "🛍️"} {product.name}
+                  <span className="flex min-w-0 items-center gap-2.5">
+                    {product.imageUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={product.imageUrl}
+                        alt=""
+                        loading="lazy"
+                        className="h-9 w-9 shrink-0 rounded-lg object-cover"
+                      />
+                    ) : (
+                      <span aria-hidden className="text-[18px]">
+                        {product.emoji ?? "🛍️"}
+                      </span>
+                    )}
+                    <span className="truncate text-[14px] font-semibold">
+                      {product.name}
+                    </span>
                   </span>
                   <span className="flex items-center gap-3">
                     <span
-                      className={`text-[11px] ${
+                      className={`text-[12px] ${
                         available <= product.lowStockThreshold
                           ? "text-[#B23A0A]"
                           : "text-mute"
@@ -199,7 +214,7 @@ export default async function ShopPage() {
             No orders yet — connect to an event and they land here.
           </p>
         ) : (
-          <ul className="space-y-2">
+          <ul className="space-y-2 md:grid md:grid-cols-2 md:gap-2 md:space-y-0">
             {orders.map((order) => (
               <li key={order.id}>
                 <OrderCard

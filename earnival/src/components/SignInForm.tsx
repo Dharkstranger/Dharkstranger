@@ -59,11 +59,17 @@ export function SignInForm({ next }: { next: string }) {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@mail.com"
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? "signin-email-error" : undefined}
             className="field"
           />
         </label>
         {error && (
-          <p role="alert" className="mb-3 text-[13px] font-medium text-[#B23A0A]">
+          <p
+            id="signin-email-error"
+            role="alert"
+            className="mb-3 text-[13px] font-medium text-[#B23A0A]"
+          >
             {error}
           </p>
         )}
@@ -90,11 +96,17 @@ export function SignInForm({ next }: { next: string }) {
           value={code}
           onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
           placeholder="123456"
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? "signin-code-error" : undefined}
           className="field font-mono text-[20px] tracking-[0.3em]"
         />
       </label>
       {error && (
-        <p role="alert" className="mb-3 text-[13px] font-medium text-[#B23A0A]">
+        <p
+          id="signin-code-error"
+          role="alert"
+          className="mb-3 text-[13px] font-medium text-[#B23A0A]"
+        >
           {error}
         </p>
       )}

@@ -59,7 +59,7 @@ export default async function TicketPage({
 
         <div className="overflow-hidden rounded-3xl border-[1.5px] border-marigold bg-white">
           <div className="bg-gradient-to-br from-night via-plum to-flame px-5 py-4 text-white">
-            <div className="text-[10px] uppercase tracking-[0.2em] text-marigold">
+            <div className="text-[11px] uppercase tracking-[0.2em] text-marigold">
               Event badge
             </div>
             <div className="mt-0.5 font-display text-[18px] font-extrabold leading-tight">
@@ -79,7 +79,7 @@ export default async function TicketPage({
               className="mx-auto h-60 w-60"
             />
 
-            <div className="mt-4 text-[11px] uppercase tracking-wider text-mute">
+            <div className="mt-4 text-[12px] uppercase tracking-wider text-mute">
               Check-in code
             </div>
             <div className="font-mono text-[26px] font-bold tracking-[0.2em]">
@@ -107,7 +107,7 @@ export default async function TicketPage({
           </div>
         )}
 
-        <p className="mt-4 text-center text-[11px] text-mute">
+        <p className="mt-4 text-center text-[12px] text-mute">
           Screenshot this or keep the link — it&apos;s your entry.
         </p>
       </div>

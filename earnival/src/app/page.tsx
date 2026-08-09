@@ -86,7 +86,17 @@ export default async function HomePage() {
                     href={`/e/${event.slug}`}
                     className="block overflow-hidden rounded-3xl border-[1.5px] border-line bg-white"
                   >
-                    <div className="relative h-28 bg-gradient-to-br from-night via-plum to-flame">
+                    <div className="relative h-32 bg-gradient-to-br from-night via-plum to-flame">
+                      {event.bannerUrl && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={event.bannerUrl}
+                          alt=""
+                          loading="lazy"
+                          className="absolute inset-0 h-full w-full object-cover"
+                        />
+                      )}
+                      <div className="absolute inset-0 bg-gradient-to-t from-night/90 to-night/10" />
                       {event._count.connections > 0 && (
                         <div className="absolute right-3 top-3">
                           <Chip tone="gold">
@@ -115,7 +125,7 @@ export default async function HomePage() {
                       </div>
                       {cheapest !== null && (
                         <div className="text-right">
-                          <div className="text-[10px] uppercase text-mute">From</div>
+                          <div className="text-[11px] uppercase text-mute">From</div>
                           <Money kobo={cheapest} className="text-[15px]" />
                         </div>
                       )}
@@ -155,6 +165,13 @@ export default async function HomePage() {
             Open a shop
           </Link>
         </div>
+
+        <p className="mt-6 text-center text-[13px] text-mute">
+          Already bought a ticket?{" "}
+          <Link href="/find" className="font-semibold text-plum underline">
+            Find it here
+          </Link>
+        </p>
       </div>
     </div>
   );

@@ -4,7 +4,7 @@ import type { User } from "@prisma/client";
 
 import { db } from "./db";
 import { generateOpaqueToken, generateOtpCode } from "./ids";
-import { sendEmail, signInCodeEmail } from "./mail";
+import { MailError, sendEmail, signInCodeEmail } from "./mail";
 
 const SESSION_COOKIE = "earnival_session";
 const SESSION_TTL_DAYS = 30;
@@ -114,7 +114,17 @@ export async function requestSignInCode(rawEmail: string): Promise<void> {
     data: { email, codeHash: sha256(code), expiresAt },
   });
 
-  await sendEmail({ to: email, ...signInCodeEmail(code) });
+  try {
+    await sendEmail({ to: email, ...signInCodeEmail(code) });
+  } catch (error) {
+    // Surface delivery failure as an auth problem the caller can show, rather
+    // than a 500 that leaves the user staring at an empty inbox.
+    throw new AuthError(
+      error instanceof MailError
+        ? error.message
+        : "We couldn't send that code. Try again in a moment.",
+    );
+  }
 }
 
 export async function verifySignInCode(

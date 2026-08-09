@@ -5,6 +5,7 @@ import { checkInTicket } from "@/lib/commerce";
 import { getCurrentUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { extractTokenFromScan, verifyTicketToken } from "@/lib/qr";
+import { RATE_LIMITS, RateLimitError, limitRequest } from "@/lib/rate-limit";
 
 const schema = z.object({
   eventId: z.string().min(1),
@@ -22,6 +23,19 @@ export async function POST(request: Request) {
   const user = await getCurrentUser();
   if (!user) {
     return NextResponse.json({ ok: false, message: "Sign in first" }, { status: 401 });
+  }
+
+  // Generous — door staff scan fast — but enough to stop scripted probing of
+  // check-in codes.
+  try {
+    await limitRequest(RATE_LIMITS.checkin, request, user.id);
+  } catch (error) {
+    if (error instanceof RateLimitError) {
+      return NextResponse.json(
+        { ok: false, message: error.message },
+        { status: 429, headers: { "Retry-After": String(error.retryAfterSeconds) } },
+      );
+    }
   }
 
   let body: unknown;

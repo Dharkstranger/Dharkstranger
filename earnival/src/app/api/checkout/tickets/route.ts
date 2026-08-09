@@ -11,6 +11,7 @@ import {
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { initializeTransaction } from "@/lib/paystack";
+import { RATE_LIMITS, RateLimitError, limitRequest } from "@/lib/rate-limit";
 
 const schema = z.object({
   eventSlug: z.string().min(1),
@@ -30,6 +31,18 @@ const schema = z.object({
 });
 
 export async function POST(request: Request) {
+  // Starting a checkout holds inventory, so this is throttled before any work.
+  try {
+    await limitRequest(RATE_LIMITS.checkout, request);
+  } catch (error) {
+    if (error instanceof RateLimitError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: 429, headers: { "Retry-After": String(error.retryAfterSeconds) } },
+      );
+    }
+  }
+
   let body: unknown;
   try {
     body = await request.json();

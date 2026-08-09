@@ -35,11 +35,12 @@ export default async function DashboardPage() {
     <div className="pb-16">
       <TopBar title="Organiser console" right={<SignOutButton />} />
 
-      <div className="px-4 pt-4">
+      <div className="px-4 pt-4 lg:grid lg:grid-cols-[340px_1fr] lg:items-start lg:gap-8 lg:px-6">
+        <div className="lg:sticky lg:top-20">
         <div className="rounded-3xl bg-night p-4 text-white">
-          <div className="text-[11px] text-[#C9BFD6]">Awaiting settlement</div>
+          <div className="text-[12px] text-[#C9BFD6]">Awaiting settlement</div>
           <Money kobo={balance} className="text-[26px] text-white" />
-          <div className="mt-1 text-[11px] text-[#C9BFD6]">
+          <div className="mt-1 text-[12px] text-[#C9BFD6]">
             Pays out T+1 after the settlement trigger.
           </div>
         </div>
@@ -76,7 +77,12 @@ export default async function DashboardPage() {
           </div>
         )}
 
-        <h2 className="mb-2 mt-6 font-display text-[15px] font-bold">Your events</h2>
+        </div>
+
+        <div className="lg:mt-0">
+        <h2 className="mb-2 mt-6 font-display text-[15px] font-bold lg:mt-0">
+          Your events
+        </h2>
 
         {events.length === 0 ? (
           <div className="rounded-3xl border-[1.5px] border-dashed border-line px-6 py-12 text-center">
@@ -93,14 +99,14 @@ export default async function DashboardPage() {
             </Link>
           </div>
         ) : (
-          <ul className="space-y-3">
+          <ul className="space-y-3 sm:grid sm:grid-cols-2 sm:gap-3 sm:space-y-0">
             {events.map((event) => (
               <li key={event.id}>
                 <Link
                   href={`/dashboard/events/${event.id}`}
                   className="relative block rounded-3xl bg-night p-4 text-white"
                 >
-                  <div className="text-[10px] uppercase tracking-[0.2em] text-marigold">
+                  <div className="text-[11px] uppercase tracking-[0.2em] text-marigold">
                     {event.status.toLowerCase()}
                   </div>
                   <div className="mt-0.5 pr-20 font-display text-[16px] font-extrabold leading-tight">
@@ -129,6 +135,7 @@ export default async function DashboardPage() {
             ))}
           </ul>
         )}
+        </div>
       </div>
     </div>
   );

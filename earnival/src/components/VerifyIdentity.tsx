@@ -60,7 +60,7 @@ export function VerifyIdentity() {
         {pending ? "Submitting…" : "Submit for review"}
       </button>
 
-      <p className="mt-2 text-[11px] text-mute">
+      <p className="mt-2 text-[12px] text-mute">
         Encrypted before storage. Only the last four digits are ever displayed.
       </p>
     </form>

@@ -49,3 +49,44 @@
   background-size: 12px 12px;
   background-repeat: repeat-x;
 }
+
+/*
+ * Buying is a phone activity, so the app shell is a phone column. Running an
+ * event is not — organisers work guest lists and dashboards on a laptop. This
+ * lets console routes escape the centred column and use the full viewport
+ * without restructuring the route tree.
+ */
+.console-breakout {
+  width: 100vw;
+  max-width: 100vw;
+  margin-left: calc(50% - 50vw);
+  margin-right: calc(50% - 50vw);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Visible only to screen readers until focused — the skip link. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+}
+
+.skip-link:focus {
+  left: 0;
+  padding: 0.75rem 1rem;
+  background: #1c1030;
+  color: #fff;
+  font-weight: 600;
+  border-bottom-right-radius: 0.75rem;
+}

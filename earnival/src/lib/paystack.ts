@@ -19,8 +19,25 @@ export function isLive(): boolean {
   return Boolean(process.env.PAYSTACK_SECRET_KEY);
 }
 
+/**
+ * Sandbox simulates payments, so anything that can reach it can mint free
+ * tickets and mark orders paid. `NODE_ENV !== "production"` is far too weak a
+ * gate — plenty of hosts leave NODE_ENV unset, which would silently open it.
+ *
+ * The rule instead: sandbox runs only when the app is serving from localhost,
+ * or when someone deliberately opts in for a staging environment. Real
+ * credentials always win.
+ */
 export function isSandbox(): boolean {
-  return !isLive() && process.env.NODE_ENV !== "production";
+  if (isLive()) return false;
+
+  const explicitOptIn = process.env.EARNIVAL_ALLOW_SANDBOX === "1";
+  const appUrl = process.env.APP_URL ?? "http://localhost:3000";
+  const servingLocally = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/i.test(
+    appUrl,
+  );
+
+  return servingLocally || explicitOptIn;
 }
 
 function secretKey(): string {
@@ -31,13 +48,27 @@ function secretKey(): string {
 
 export class PaystackError extends Error {}
 
-/** Guards startup: a production deploy without payment keys is a broken deploy. */
+/**
+ * Startup guard. A deployment that is not obviously local, has no payment
+ * credentials, and has not explicitly opted into sandbox is a misconfiguration
+ * that would hand out free tickets — so it refuses to boot.
+ */
 export function assertPaymentsConfigured(): void {
-  if (process.env.NODE_ENV === "production" && !isLive()) {
-    throw new PaystackError(
-      "PAYSTACK_SECRET_KEY must be set in production — refusing to run with simulated payments",
+  if (isLive()) return;
+
+  if (isSandbox()) {
+    console.warn(
+      "[earnival] SANDBOX MODE — payments are simulated. Never expose this publicly.",
     );
+    return;
   }
+
+  throw new PaystackError(
+    "PAYSTACK_SECRET_KEY is not set and this deployment is not local. " +
+      "Refusing to start: without it, payments cannot be taken and sandbox " +
+      "checkout would hand out free tickets. Set the key, or set " +
+      "EARNIVAL_ALLOW_SANDBOX=1 if this really is a throwaway environment.",
+  );
 }
 
 export interface InitializeParams {

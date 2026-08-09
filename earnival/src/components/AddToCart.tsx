@@ -38,7 +38,7 @@ export function AddToCart({
   }, [eventSlug, product.productId]);
 
   if (product.maxQuantity <= 0) {
-    return <span className="text-[11px] font-semibold uppercase text-mute">Sold out</span>;
+    return <span className="text-[12px] font-semibold uppercase text-mute">Sold out</span>;
   }
 
   if (quantity === 0) {
@@ -59,7 +59,7 @@ export function AddToCart({
         type="button"
         onClick={() => setQuantity(product.productId, quantity - 1)}
         aria-label={`Remove one ${product.name}`}
-        className="px-1 text-lg leading-none"
+        className="grid h-9 w-9 place-items-center text-lg leading-none"
       >
         −
       </button>
@@ -69,7 +69,7 @@ export function AddToCart({
         onClick={() => setQuantity(product.productId, quantity + 1)}
         disabled={quantity >= product.maxQuantity}
         aria-label={`Add one ${product.name}`}
-        className="px-1 text-lg leading-none disabled:opacity-30"
+        className="grid h-9 w-9 place-items-center text-lg leading-none disabled:opacity-30"
       >
         +
       </button>

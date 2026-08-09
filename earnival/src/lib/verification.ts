@@ -419,10 +419,25 @@ async function sendSms(phone: string, message: string): Promise<void> {
         }),
       });
       if (res.ok) return;
-      console.error("[sms] provider rejected the message:", await res.text());
-    } catch (error) {
-      console.error("[sms] delivery failed:", error);
+      console.error("[sms] provider rejected the message");
+    } catch {
+      console.error("[sms] delivery failed");
     }
+    throw new VerificationError("We couldn't send that code. Try again shortly.");
+  }
+
+  // Verification codes are credentials: printing them is a local-development
+  // convenience only. A deployed instance without an SMS provider must fail
+  // rather than write the code where anyone with log access can read it.
+  const appUrl = process.env.APP_URL ?? "";
+  const deployed =
+    process.env.NODE_ENV === "production" ||
+    (Boolean(appUrl) && !/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])/i.test(appUrl));
+
+  if (deployed) {
+    throw new VerificationError(
+      "Phone verification isn't available right now. Please try again later.",
+    );
   }
 
   console.log(

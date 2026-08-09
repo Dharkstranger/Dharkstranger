@@ -3,6 +3,7 @@ import { Prisma, type PaymentStatus } from "@prisma/client";
 
 import { db } from "./db";
 import {
+  generateOrderGroupRef,
   generatePaymentReference,
   generatePickupCode,
   generateTicketCode,
@@ -24,6 +25,7 @@ import {
   ticketEmail,
 } from "./mail";
 import { checkRevenueCap } from "./verification";
+import { notifyVendorLowStock, notifyVendorOfSale } from "./notify";
 
 export class SoldOutError extends Error {}
 export class CheckoutError extends Error {}
@@ -281,6 +283,39 @@ export interface ProductCheckoutResult extends CheckoutResult {
 export async function createProductCheckout(
   input: ProductCheckoutInput,
 ): Promise<ProductCheckoutResult> {
+  // Order references are random, but "random" is not "never collides". A
+  // duplicate is retried rather than being surfaced to a buyer as a failure.
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const result = await attemptProductCheckout(input);
+
+      // Pay-at-event orders never pass through payment settlement, so this is
+      // the only chance to tell the vendor an order is waiting for them.
+      if (!input.payNow) {
+        const orders = await db.order.findMany({
+          where: { groupRef: result.groupRef },
+          select: { id: true },
+        });
+        for (const order of orders) {
+          void alertVendor(order.id);
+        }
+      }
+
+      return result;
+    } catch (error) {
+      const duplicateReference =
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002" &&
+        String(error.meta?.target ?? "").includes("reference");
+
+      if (!duplicateReference || attempt >= 3) throw error;
+    }
+  }
+}
+
+async function attemptProductCheckout(
+  input: ProductCheckoutInput,
+): Promise<ProductCheckoutResult> {
   const { eventSlug, items, buyer, userId, payNow } = input;
 
   if (items.length === 0) throw new CheckoutError("Your basket is empty");
@@ -376,8 +411,7 @@ export async function createProductCheckout(
       shopTotals.map((s) => s.subtotal),
     );
 
-    const counter = await tx.event.count();
-    const groupRef = `EA-${Date.now().toString(36).toUpperCase().slice(-5)}${counter % 10}`;
+    const groupRef = generateOrderGroupRef();
 
     let payment: { id: string; reference: string } | null = null;
     if (payNow) {
@@ -878,19 +912,60 @@ async function sendPostPaymentEmails(reference: string): Promise<void> {
   }
 
   for (const order of payment.orders) {
-    if (!order.buyerEmail) continue;
-    await sendEmail({
-      to: order.buyerEmail,
-      ...orderReceiptEmail({
-        buyerName: order.buyerName,
-        shopName: order.shop.name,
-        reference: order.reference,
-        items: order.items.map((i) => ({ name: i.nameSnapshot, quantity: i.quantity })),
-        totalLabel: formatNaira(order.totalKobo),
-        paid: true,
-        orderUrl: `${base}/orders/${order.reference}`,
-      }),
+    if (order.buyerEmail) {
+      await sendEmail({
+        to: order.buyerEmail,
+        ...orderReceiptEmail({
+          buyerName: order.buyerName,
+          shopName: order.shop.name,
+          reference: order.reference,
+          items: order.items.map((i) => ({ name: i.nameSnapshot, quantity: i.quantity })),
+          totalLabel: formatNaira(order.totalKobo),
+          paid: true,
+          orderUrl: `${base}/orders/${order.reference}`,
+        }),
+      });
+    }
+    await alertVendor(order.id);
+  }
+}
+
+/**
+ * Pings the vendor's phone about a new order, then warns them about anything
+ * that just dropped to its low-stock threshold. Best-effort throughout — the
+ * sale is already complete and must not be undone by a messaging outage.
+ */
+export async function alertVendor(orderId: string): Promise<void> {
+  try {
+    const order = await db.order.findUnique({
+      where: { id: orderId },
+      include: { shop: true, items: { include: { product: true } } },
     });
+    if (!order) return;
+
+    await notifyVendorOfSale({
+      phone: order.shop.whatsapp ?? order.shop.supportPhone ?? null,
+      shopName: order.shop.name,
+      reference: order.reference,
+      items: order.items.map((i) => ({ name: i.nameSnapshot, quantity: i.quantity })),
+      totalKobo: order.totalKobo,
+      paid: Boolean(order.paidAt),
+      buyerName: order.buyerName,
+    });
+
+    for (const item of order.items) {
+      const remaining = item.product.stock - item.product.reserved;
+      if (remaining <= item.product.lowStockThreshold) {
+        await notifyVendorLowStock({
+          phone: order.shop.whatsapp ?? order.shop.supportPhone ?? null,
+          shopName: order.shop.name,
+          productName: item.product.name,
+          remaining: Math.max(0, remaining),
+        });
+      }
+    }
+  } catch (error) {
+    console.error("[commerce] vendor alert failed:", error);
   }
 }
 

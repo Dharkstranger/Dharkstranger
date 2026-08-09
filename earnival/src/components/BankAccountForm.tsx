@@ -75,7 +75,7 @@ export function BankAccountForm({
         {pending ? "Checking with the bank…" : "Verify & save"}
       </button>
 
-      <p className="mt-2 text-[11px] text-mute">
+      <p className="mt-2 text-[12px] text-mute">
         We confirm the account name with your bank before anything can be paid out.
       </p>
     </form>

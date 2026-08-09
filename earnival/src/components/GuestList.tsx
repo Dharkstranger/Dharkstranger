@@ -67,7 +67,7 @@ export function GuestList({ eventId, guests }: { eventId: string; guests: Guest[
         </div>
       )}
 
-      <ul className="space-y-2">
+      <ul className="space-y-2 md:grid md:grid-cols-2 md:gap-2 md:space-y-0 xl:grid-cols-3">
         {filtered.map((guest) => {
           const isIn = guest.checkedIn || state[guest.id];
           return (
@@ -77,7 +77,7 @@ export function GuestList({ eventId, guests }: { eventId: string; guests: Guest[
             >
               <div className="min-w-0">
                 <div className="truncate text-[13px] font-semibold">{guest.name}</div>
-                <div className="text-[11px] text-mute">
+                <div className="text-[12px] text-mute">
                   {guest.ticketTypeName} ·{" "}
                   <span className="font-mono">{guest.code}</span>
                 </div>

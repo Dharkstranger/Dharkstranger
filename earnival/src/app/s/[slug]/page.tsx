@@ -100,15 +100,25 @@ export default async function ShopPage({ params, searchParams }: Props) {
                   className="flex items-center justify-between rounded-2xl border-[1.5px] border-line bg-white px-4 py-3"
                 >
                   <div className="flex min-w-0 items-center gap-3">
-                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-haze text-xl">
-                      {product.emoji ?? "🛍️"}
-                    </span>
+                    {product.imageUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={product.imageUrl}
+                        alt=""
+                        loading="lazy"
+                        className="h-14 w-14 shrink-0 rounded-xl object-cover"
+                      />
+                    ) : (
+                      <span className="grid h-14 w-14 shrink-0 place-items-center rounded-xl bg-haze text-2xl">
+                        {product.emoji ?? "🛍️"}
+                      </span>
+                    )}
                     <div className="min-w-0">
                       <div className="truncate text-[14px] font-semibold">
                         {product.name}
                       </div>
                       <div
-                        className={`text-[11px] ${
+                        className={`text-[12px] ${
                           available <= 5 ? "text-[#B23A0A]" : "text-mute"
                         }`}
                       >

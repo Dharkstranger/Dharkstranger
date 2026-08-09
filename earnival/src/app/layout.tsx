@@ -35,19 +35,31 @@ export const metadata: Metadata = {
     type: "website",
     siteName: "Earnival",
   },
+  applicationName: "Earnival",
+  appleWebApp: { capable: true, title: "Earnival", statusBarStyle: "black-translucent" },
 };
 
 export const viewport: Viewport = {
   themeColor: "#1C1030",
   width: "device-width",
   initialScale: 1,
+  // Never block pinch-zoom: capping it is one of the most common mobile
+  // accessibility failures, and this app is read outdoors at night.
+  maximumScale: 5,
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${display.variable} ${sans.variable} ${mono.variable}`}>
+    <html lang="en-NG" className={`${display.variable} ${sans.variable} ${mono.variable}`}>
       <body className="font-sans antialiased">
-        <div className="mx-auto min-h-screen max-w-md bg-paper shadow-2xl">{children}</div>
+        <a href="#main" className="skip-link">
+          Skip to content
+        </a>
+        <div className="mx-auto min-h-screen max-w-md bg-paper shadow-2xl">
+          {/* Single main landmark for the whole app; console routes widen
+              themselves from inside via ConsoleShell. */}
+          <main id="main">{children}</main>
+        </div>
       </body>
     </html>
   );

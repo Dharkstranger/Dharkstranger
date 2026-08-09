@@ -115,7 +115,7 @@ export function BasketView({
           key={shopId}
           className="mb-2 rounded-2xl border-[1.5px] border-line bg-white p-3.5"
         >
-          <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-mute">
+          <div className="mb-1 text-[12px] font-bold uppercase tracking-wider text-mute">
             {shopItems[0].shopName}
           </div>
           {shopItems.map((item) => (
@@ -131,7 +131,7 @@ export function BasketView({
                   type="button"
                   onClick={() => setQuantity(item.productId, item.quantity - 1)}
                   aria-label={`Remove one ${item.name}`}
-                  className="px-1.5 text-base leading-none"
+                  className="grid h-9 w-9 place-items-center text-base leading-none"
                 >
                   −
                 </button>
@@ -141,7 +141,7 @@ export function BasketView({
                   onClick={() => setQuantity(item.productId, item.quantity + 1)}
                   disabled={item.quantity >= item.maxQuantity}
                   aria-label={`Add one ${item.name}`}
-                  className="px-1.5 text-base leading-none disabled:opacity-30"
+                  className="grid h-9 w-9 place-items-center text-base leading-none disabled:opacity-30"
                 >
                   +
                 </button>
@@ -228,7 +228,7 @@ export function BasketView({
         )}
       </div>
 
-      <p className="mt-2 text-[11px] text-mute">
+      <p className="mt-2 text-[12px] text-mute">
         Orders lock once paid. Collect at the event with your pickup code.
       </p>
     </div>

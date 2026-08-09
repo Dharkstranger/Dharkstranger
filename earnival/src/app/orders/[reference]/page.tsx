@@ -67,7 +67,7 @@ export default async function OrderPage({
 
           {order.pickupCode && order.status === "READY" && (
             <div className="mt-4 rounded-2xl bg-[#FFF1D2] px-4 py-3 text-center">
-              <div className="text-[11px] uppercase tracking-wider text-[#8a5f00]">
+              <div className="text-[12px] uppercase tracking-wider text-[#8a5f00]">
                 Pickup code
               </div>
               <div className="font-mono text-[26px] font-bold tracking-[0.2em] text-[#8a5f00]">

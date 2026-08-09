@@ -29,6 +29,13 @@ export default async function SignInPage({
           so your events, shop and money stay yours across devices.
         </p>
         <SignInForm next={next ?? "/dashboard"} />
+
+        <p className="mt-6 text-center text-[13px] text-mute">
+          Just looking for a ticket you bought?{" "}
+          <a href="/find" className="font-semibold text-plum underline">
+            Find it without an account
+          </a>
+        </p>
       </div>
     </div>
   );

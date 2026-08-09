@@ -7,6 +7,7 @@ import {
   requestSignInCode,
   verifySignInCode,
 } from "@/lib/auth";
+import { RATE_LIMITS, RateLimitError, limitRequest } from "@/lib/rate-limit";
 
 const requestSchema = z.object({
   action: z.literal("request"),
@@ -41,6 +42,20 @@ export async function POST(request: Request) {
       { error: parsed.error.issues[0]?.message ?? "Check your details" },
       { status: 400 },
     );
+  }
+
+  // Requesting a code costs a real email; verifying is a guessing surface.
+  if (parsed.data.action !== "signout") {
+    try {
+      await limitRequest(RATE_LIMITS.otp, request);
+    } catch (error) {
+      if (error instanceof RateLimitError) {
+        return NextResponse.json(
+          { error: error.message },
+          { status: 429, headers: { "Retry-After": String(error.retryAfterSeconds) } },
+        );
+      }
+    }
   }
 
   try {

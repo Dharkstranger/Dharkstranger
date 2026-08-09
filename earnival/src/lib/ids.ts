@@ -26,8 +26,21 @@ export function generatePickupCode(): string {
   return `PK-${randomFrom(SAFE_ALPHABET, 4)}`;
 }
 
-export function generateOrderGroupRef(sequence: number): string {
-  return `EA-${sequence}`;
+/**
+ * Reference for a basket, shared by every per-shop order inside it.
+ *
+ * The timestamp alone is NOT enough: during a ticket drop, hundreds of baskets
+ * land in the same millisecond, and a millisecond-derived reference collides
+ * with itself. The random block is what actually makes this unique; the
+ * timestamp is there so references sort roughly by age and are easy to read
+ * out over the phone.
+ */
+export function generateOrderGroupRef(): string {
+  const stamp = Date.now().toString(36).toUpperCase().slice(-4);
+  // 32^6 ≈ 1.07 billion per ~28-minute timestamp block. Checkout also retries
+  // on the unique-constraint violation, so a collision costs a round trip
+  // rather than a failed purchase.
+  return `EA-${stamp}-${randomFrom(SAFE_ALPHABET, 6)}`;
 }
 
 export function generatePaymentReference(): string {

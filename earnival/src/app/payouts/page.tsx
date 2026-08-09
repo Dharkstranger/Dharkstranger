@@ -39,9 +39,9 @@ export default async function PayoutsPage() {
 
       <div className="px-4 pt-4">
         <div className="rounded-3xl bg-night p-4 text-white">
-          <div className="text-[11px] text-[#C9BFD6]">Awaiting settlement</div>
+          <div className="text-[12px] text-[#C9BFD6]">Awaiting settlement</div>
           <Money kobo={balance} className="text-[26px] text-white" />
-          <div className="mt-2 flex justify-between text-[11px] text-[#C9BFD6]">
+          <div className="mt-2 flex justify-between text-[12px] text-[#C9BFD6]">
             <span>Your cadence</span>
             <b className="text-marigold">
               {entitlements.settlementCadence === "DAILY"
@@ -49,7 +49,7 @@ export default async function PayoutsPage() {
                 : "After each event ends"}
             </b>
           </div>
-          <div className="mt-1 text-[11px] text-[#C9BFD6]">
+          <div className="mt-1 text-[12px] text-[#C9BFD6]">
             Payouts land T+1 after the trigger. Minimum{" "}
             {formatNaira(MINIMUM_PAYOUT_KOBO)}.
           </div>
@@ -87,7 +87,7 @@ export default async function PayoutsPage() {
               >
                 <div>
                   <div className="text-[13px] font-semibold">{account.accountName}</div>
-                  <div className="font-mono text-[11px] text-mute">
+                  <div className="font-mono text-[12px] text-mute">
                     {account.bankName} · ••••{account.accountNumber.slice(-4)}
                   </div>
                 </div>
@@ -131,7 +131,7 @@ export default async function PayoutsPage() {
                     {settlement.status.toLowerCase()}
                   </Chip>
                 </div>
-                <div className="mt-0.5 text-[11px] text-mute">
+                <div className="mt-0.5 text-[12px] text-mute">
                   {settlement.periodStart.toLocaleDateString("en-NG", {
                     day: "numeric",
                     month: "short",
@@ -148,7 +148,7 @@ export default async function PayoutsPage() {
                     })}`}
                 </div>
                 {settlement.failureReason && (
-                  <div className="mt-1 text-[11px] text-[#B23A0A]">
+                  <div className="mt-1 text-[12px] text-[#B23A0A]">
                     {settlement.failureReason} — this will be retried automatically.
                   </div>
                 )}

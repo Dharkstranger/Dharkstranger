@@ -36,7 +36,7 @@ export function Chip({
 }) {
   return (
     <span
-      className={`inline-block rounded-full px-2 py-[3px] text-[10px] font-bold uppercase tracking-wide ${CHIP_TONES[tone]}`}
+      className={`inline-block rounded-full px-2 py-[3px] text-[11px] font-bold uppercase tracking-wide ${CHIP_TONES[tone]}`}
     >
       {children}
     </span>
@@ -206,7 +206,7 @@ export function Receipt({
   return (
     <div className="my-3">
       <div className="rounded-t-2xl bg-night px-4 pb-2 pt-3 text-white">
-        <div className="text-[10px] uppercase tracking-[0.2em] text-marigold">
+        <div className="text-[11px] uppercase tracking-[0.2em] text-marigold">
           Settlement split
         </div>
         <div className="text-sm font-semibold">{title}</div>
@@ -228,7 +228,7 @@ export function Receipt({
         ))}
       </div>
       <div className="flex items-center justify-between border-x border-b border-t-2 border-line border-t-night bg-white px-4 py-3">
-        <span className="text-[11px] font-bold uppercase tracking-wide text-leaf">
+        <span className="text-[12px] font-bold uppercase tracking-wide text-leaf">
           {total.label}
         </span>
         <Money kobo={total.kobo} className="text-[16px] text-leaf" />
@@ -250,9 +250,9 @@ export function StatTile({
 }) {
   return (
     <div className="rounded-2xl border-[1.5px] border-line bg-white px-3.5 py-3">
-      <div className="text-[10px] uppercase tracking-wider text-mute">{label}</div>
+      <div className="text-[11px] uppercase tracking-wider text-mute">{label}</div>
       <div className="mt-0.5 font-display text-[18px] font-extrabold">{children}</div>
-      {sub && <div className="text-[11px] text-mute">{sub}</div>}
+      {sub && <div className="text-[12px] text-mute">{sub}</div>}
     </div>
   );
 }

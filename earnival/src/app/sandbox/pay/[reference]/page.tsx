@@ -35,7 +35,7 @@ export default async function SandboxPayPage({
         </div>
 
         <div className="rounded-3xl border-[1.5px] border-line bg-white p-5">
-          <div className="text-[11px] uppercase tracking-wider text-mute">
+          <div className="text-[12px] uppercase tracking-wider text-mute">
             Amount due
           </div>
           <div className="font-display text-[30px] font-extrabold">
@@ -44,7 +44,7 @@ export default async function SandboxPayPage({
           <div className="mt-1 text-[13px] text-mute">
             {payment.buyerName} · {payment.buyerEmail}
           </div>
-          <div className="mt-1 font-mono text-[11px] text-mute">{payment.reference}</div>
+          <div className="mt-1 font-mono text-[12px] text-mute">{payment.reference}</div>
         </div>
 
         {payment.status === "SUCCESS" ? (

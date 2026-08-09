@@ -44,7 +44,7 @@ export function ReviewVerification(props: {
           <span className="text-mute">Identifier</span>
           <b className="font-mono">••••{props.last4 ?? "????"}</b>
         </div>
-        <p className="mt-2 text-[11px] text-mute">
+        <p className="mt-2 text-[12px] text-mute">
           The full identifier is encrypted at rest. Check it against the provider
           portal rather than requesting it here.
         </p>

@@ -1,8 +1,9 @@
 "use client";
 
-import { useActionState, useEffect, useRef } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 
 import { addProductAction, type ActionState } from "@/app/actions";
+import { ImageUpload } from "./ImageUpload";
 import { btnClass } from "./ui";
 
 export function ProductForm({ shopId }: { shopId: string }) {
@@ -11,9 +12,15 @@ export function ProductForm({ shopId }: { shopId: string }) {
     {},
   );
   const formRef = useRef<HTMLFormElement>(null);
+  // Remounts the uploader after a successful add; form.reset() cannot clear
+  // component state holding the uploaded URL.
+  const [formKey, setFormKey] = useState(0);
 
   useEffect(() => {
-    if (state.ok) formRef.current?.reset();
+    if (state.ok) {
+      formRef.current?.reset();
+      setFormKey((k) => k + 1);
+    }
   }, [state]);
 
   return (
@@ -23,6 +30,16 @@ export function ProductForm({ shopId }: { shopId: string }) {
       className="rounded-2xl border-[1.5px] border-dashed border-line bg-white p-3.5"
     >
       <input type="hidden" name="shopId" value={shopId} />
+
+      <ImageUpload
+        key={formKey}
+        name="imageUrl"
+        label="Product photo (optional)"
+        hint="Photos sell. An emoji is the fallback."
+        aspect="square"
+        maxEdge={800}
+      />
+
       <div className="grid grid-cols-6 gap-2">
         <input
           name="emoji"

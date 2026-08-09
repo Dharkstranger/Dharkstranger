@@ -11,9 +11,24 @@ export interface EmailMessage {
   subject: string;
   html: string;
   text: string;
+  /**
+   * Marks a message whose body is a credential — a sign-in code, a ticket QR
+   * link, a pickup code. These are never written to logs outside local
+   * development, because anyone with log access could otherwise use them.
+   */
+  sensitive?: boolean;
 }
 
 const FROM = process.env.EMAIL_FROM || "Earnival <tickets@earnival.app>";
+
+export class MailError extends Error {}
+
+/** True when this process is serving something other than a local dev machine. */
+function isDeployed(): boolean {
+  if (process.env.NODE_ENV === "production") return true;
+  const appUrl = process.env.APP_URL ?? "";
+  return Boolean(appUrl) && !/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])/i.test(appUrl);
+}
 
 async function sendViaResend(message: EmailMessage): Promise<void> {
   const res = await fetch("https://api.resend.com/emails", {
@@ -50,17 +65,47 @@ function sendViaConsole(message: EmailMessage): void {
   );
 }
 
+/**
+ * Sends a message.
+ *
+ * The console transport is a local-development convenience, not a fallback for
+ * a real deployment: printing sign-in codes and ticket links into a log would
+ * let anyone with log access sign in as any user. So on a deployed instance a
+ * credential email that cannot be delivered throws, and an ordinary one records
+ * only that delivery failed — never its contents.
+ */
 export async function sendEmail(message: EmailMessage): Promise<void> {
   if (process.env.RESEND_API_KEY) {
     try {
       await sendViaResend(message);
       return;
     } catch (error) {
-      // Never let a mail outage break a purchase — the ticket already exists
-      // and is retrievable from the order page.
-      console.error("[mail] delivery failed, falling back to log:", error);
+      if (message.sensitive) {
+        // The user is standing there waiting for a code. Surface it.
+        throw new MailError("We couldn't send that email. Try again in a moment.");
+      }
+      // A receipt failing must never undo a completed purchase.
+      console.error(
+        `[mail] delivery failed for "${message.subject}" (recipient withheld):`,
+        error instanceof Error ? error.message : error,
+      );
+      return;
     }
   }
+
+  if (isDeployed()) {
+    if (message.sensitive) {
+      throw new MailError(
+        "Email delivery is not configured, so this code cannot be sent. " +
+          "Set RESEND_API_KEY.",
+      );
+    }
+    console.error(
+      `[mail] no provider configured; dropped "${message.subject}" (recipient withheld)`,
+    );
+    return;
+  }
+
   sendViaConsole(message);
 }
 
@@ -80,6 +125,7 @@ const shell = (body: string) => `
 
 export function signInCodeEmail(code: string): Omit<EmailMessage, "to"> {
   return {
+    sensitive: true,
     subject: `${code} is your Earnival sign-in code`,
     text: `Your Earnival sign-in code is ${code}. It expires in 10 minutes.`,
     html: shell(`
@@ -104,6 +150,8 @@ export function ticketEmail(params: {
     timeStyle: "short",
   });
   return {
+    // Carries the QR link and check-in code — the ticket itself.
+    sensitive: true,
     subject: `Your ticket to ${params.eventName}`,
     text: [
       `You're in, ${params.attendeeName}.`,
@@ -187,6 +235,8 @@ export function pickupReadyEmail(params: {
   pickupCode: string;
 }): Omit<EmailMessage, "to"> {
   return {
+    // Carries the pickup code that releases the goods.
+    sensitive: true,
     subject: `Ready for pickup — ${params.reference}`,
     text: `${params.buyerName}, your order from ${params.shopName} is ready. Pickup code: ${params.pickupCode}`,
     html: shell(`

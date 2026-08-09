@@ -23,10 +23,24 @@ export default async function ScanPage({
 
   if (!event || event.organiserId !== user.id) notFound();
 
+  const [checkedInCount, totalCount] = await Promise.all([
+    db.ticket.count({ where: { eventId: event.id, status: "CHECKED_IN" } }),
+    db.ticket.count({
+      where: { eventId: event.id, status: { in: ["VALID", "CHECKED_IN"] } },
+    }),
+  ]);
+
   return (
     <div>
       <TopBar title="Scan tickets" backHref={`/dashboard/events/${event.id}`} />
-      <Scanner eventId={event.id} eventName={event.name} />
+      
+        <Scanner
+          eventId={event.id}
+          eventName={event.name}
+          checkedInCount={checkedInCount}
+          totalCount={totalCount}
+        />
+      
     </div>
   );
 }

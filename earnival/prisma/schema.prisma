@@ -58,6 +58,7 @@ model User {
   settlements    Settlement[]
   verifications  VerificationSubmission[]
   reviewedEvents Event[]         @relation("EventReviewer")
+  mediaAssets    MediaAsset[]
 }
 
 enum KycKind {
@@ -738,6 +739,40 @@ model WebhookEvent {
   createdAt   DateTime  @default(now())
 
   @@unique([provider, externalId])
+}
+
+/// Uploaded images — event banners and product photos.
+///
+/// Bytes live in Postgres rather than object storage so a fresh deployment
+/// works with no extra service to configure. Uploads are downscaled in the
+/// browser before they arrive, so rows stay small. If volume ever outgrows
+/// this, only `src/lib/media.ts` needs to change: everything else refers to
+/// images by URL.
+model MediaAsset {
+  id          String   @id @default(cuid())
+  contentType String
+  bytes       Bytes
+  byteSize    Int
+  width       Int?
+  height      Int?
+  /// Who uploaded it, for quota and abuse handling.
+  ownerId     String?
+  createdAt   DateTime @default(now())
+
+  owner User? @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+
+  @@index([ownerId])
+}
+
+/// Fixed-window rate limit counters. Stored in Postgres rather than memory so
+/// the limit holds across serverless instances, which do not share process
+/// state.
+model RateLimitCounter {
+  key         String   @id
+  count       Int      @default(0)
+  windowStart DateTime
+
+  @@index([windowStart])
 }
 
 /// Guards non-idempotent POSTs (order creation, check-in sync) against

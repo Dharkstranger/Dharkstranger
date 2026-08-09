@@ -4,6 +4,7 @@ import { useActionState, useState } from "react";
 
 import { createEventAction, type ActionState } from "@/app/actions";
 import { buyerTotal, formatNaira, nairaToKobo } from "@/lib/money";
+import { ImageUpload } from "./ImageUpload";
 import { btnClass } from "./ui";
 
 const CATEGORIES = [
@@ -99,6 +100,13 @@ export function EventForm() {
         />
       </label>
 
+      <ImageUpload
+        name="bannerUrl"
+        label="Event banner"
+        hint="This is the image people see when your link lands in a WhatsApp group. Worth getting right."
+        aspect="wide"
+      />
+
       <label className="mb-4 block">
         <span className="label block">About it (optional)</span>
         <textarea
@@ -154,7 +162,7 @@ export function EventForm() {
                   className="rounded-xl border-[1.5px] border-line px-3 py-2 font-mono text-[14px] outline-none"
                 />
               </div>
-              <div className="mt-1.5 flex items-center justify-between text-[11px] text-mute">
+              <div className="mt-1.5 flex items-center justify-between text-[12px] text-mute">
                 <span>
                   {priceKobo === 0
                     ? "Free ticket"

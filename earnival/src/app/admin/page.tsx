@@ -133,7 +133,7 @@ export default async function AdminPage() {
                   <div className="truncate text-[13px] font-semibold">
                     {settlement.party.name ?? settlement.party.email}
                   </div>
-                  <div className="font-mono text-[11px] text-mute">
+                  <div className="font-mono text-[12px] text-mute">
                     {settlement.reference}
                     {settlement.failureReason && ` · ${settlement.failureReason}`}
                   </div>
@@ -202,7 +202,7 @@ function Stat({ label, value }: { label: string; value: number }) {
   return (
     <div className="rounded-2xl border-[1.5px] border-line bg-white px-3 py-3 text-center">
       <div className="font-display text-[20px] font-extrabold">{value}</div>
-      <div className="text-[10px] uppercase tracking-wider text-mute">{label}</div>
+      <div className="text-[11px] uppercase tracking-wider text-mute">{label}</div>
     </div>
   );
 }

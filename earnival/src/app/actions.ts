@@ -37,6 +37,12 @@ const eventSchema = z.object({
   time: z.string().min(1, "Pick a start time"),
   description: z.string().trim().max(2000).optional(),
   organiserNote: z.string().trim().max(500).optional(),
+  // Only ever a path we generated ourselves — never an arbitrary remote URL.
+  bannerUrl: z
+    .string()
+    .regex(/^\/api\/media\/[A-Za-z0-9_-]+$/, "That image didn't upload properly")
+    .optional()
+    .or(z.literal("")),
   ticketNames: z.array(z.string()),
   ticketPrices: z.array(z.string()),
   ticketQuantities: z.array(z.string()),
@@ -56,6 +62,7 @@ export async function createEventAction(
     time: formData.get("time"),
     description: formData.get("description") || undefined,
     organiserNote: formData.get("organiserNote") || undefined,
+    bannerUrl: formData.get("bannerUrl") || undefined,
     ticketNames: formData.getAll("ticketName").map(String),
     ticketPrices: formData.getAll("ticketPrice").map(String),
     ticketQuantities: formData.getAll("ticketQuantity").map(String),
@@ -107,6 +114,7 @@ export async function createEventAction(
       venue: data.venue,
       description: data.description ?? null,
       organiserNote: data.organiserNote ?? null,
+      bannerUrl: data.bannerUrl || null,
       startsAt,
       organiserId: user.id,
       status: "LIVE",
@@ -203,6 +211,11 @@ const productSchema = z.object({
   price: z.coerce.number().min(0, "Price must be zero or more"),
   stock: z.coerce.number().int().min(0, "Stock must be a whole number"),
   emoji: z.string().trim().max(8).optional(),
+  imageUrl: z
+    .string()
+    .regex(/^\/api\/media\/[A-Za-z0-9_-]+$/)
+    .optional()
+    .or(z.literal("")),
 });
 
 export async function addProductAction(
@@ -217,6 +230,7 @@ export async function addProductAction(
     price: formData.get("price"),
     stock: formData.get("stock"),
     emoji: formData.get("emoji") || undefined,
+    imageUrl: formData.get("imageUrl") || undefined,
   });
 
   if (!parsed.success) {
@@ -236,6 +250,7 @@ export async function addProductAction(
       priceKobo: nairaToKobo(parsed.data.price),
       stock: parsed.data.stock,
       emoji: parsed.data.emoji || null,
+      imageUrl: parsed.data.imageUrl || null,
       sku: generateSku(shop.name, shop._count.products + 1),
     },
   });

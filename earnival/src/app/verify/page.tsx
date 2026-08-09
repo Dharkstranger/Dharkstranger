@@ -50,7 +50,7 @@ export default async function VerifyPage() {
         <div className="rounded-3xl bg-night p-4 text-white">
           <div className="flex items-center justify-between">
             <div>
-              <div className="text-[11px] text-[#C9BFD6]">Your level</div>
+              <div className="text-[12px] text-[#C9BFD6]">Your level</div>
               <div className="font-display text-[24px] font-extrabold">
                 {user.verificationLevel} · {current.label}
               </div>
@@ -166,7 +166,7 @@ export default async function VerifyPage() {
                             submission.last4 ? ` ••••${submission.last4}` : ""
                           }`}
                     </div>
-                    <div className="text-[11px] text-mute">
+                    <div className="text-[12px] text-mute">
                       {submission.createdAt.toLocaleDateString("en-NG", {
                         day: "numeric",
                         month: "short",
@@ -192,7 +192,7 @@ export default async function VerifyPage() {
           </>
         )}
 
-        <p className="mt-6 text-[11px] leading-relaxed text-mute">
+        <p className="mt-6 text-[12px] leading-relaxed text-mute">
           Your BVN, NIN and TIN are encrypted before they are stored, and only the
           last four digits are ever shown — to you or to our reviewers. We use them
           solely to verify your identity, in line with the NDPR.
