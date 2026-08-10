@@ -11,6 +11,7 @@ import {
   type Cart,
 } from "@/lib/cart";
 import { buyerTotal, formatNaira } from "@/lib/money";
+import { PolicyNote } from "./PolicyNote";
 import { btnClass } from "./ui";
 
 interface ShopView {
@@ -231,6 +232,8 @@ export function BasketView({
       <p className="mt-2 text-[12px] text-mute">
         Orders lock once paid. Collect at the event with your pickup code.
       </p>
+
+      <PolicyNote context="order" />
     </div>
   );
 }

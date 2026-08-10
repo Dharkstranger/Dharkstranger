@@ -14,7 +14,7 @@ export default async function DashboardPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/signin?next=/dashboard");
 
-  const [events, balance, shop] = await Promise.all([
+  const [events, balance, shop, pendingInvites, workingEvents] = await Promise.all([
     db.event.findMany({
       where: { organiserId: user.id },
       orderBy: { startsAt: "desc" },
@@ -29,6 +29,19 @@ export default async function DashboardPage() {
     }),
     unsettledBalance(user.id),
     db.shop.findFirst({ where: { ownerId: user.id }, select: { slug: true } }),
+    // Matched on email too: an invitation can predate the account.
+    db.eventMember.count({
+      where: {
+        status: "PENDING",
+        OR: [{ userId: user.id }, { inviteEmail: user.email }],
+      },
+    }),
+    db.eventMember.findMany({
+      where: { userId: user.id, status: "ACCEPTED" },
+      include: {
+        event: { select: { id: true, name: true, startsAt: true, venue: true } },
+      },
+    }),
   ]);
 
   return (
@@ -66,6 +79,15 @@ export default async function DashboardPage() {
             className="mt-2 block rounded-2xl bg-plum px-4 py-2.5 text-center text-[13px] font-semibold text-white"
           >
             Admin console
+          </Link>
+        )}
+
+        {pendingInvites > 0 && (
+          <Link
+            href="/dashboard/invitations"
+            className="mt-3 block rounded-2xl border-[1.5px] border-marigold bg-[#FFF1D2] px-4 py-3 text-[13px] font-semibold text-[#8a5f00]"
+          >
+            📬 {pendingInvites} invitation{pendingInvites > 1 ? "s" : ""} waiting →
           </Link>
         )}
 
@@ -134,6 +156,44 @@ export default async function DashboardPage() {
               </li>
             ))}
           </ul>
+        )}
+
+        {workingEvents.length > 0 && (
+          <>
+            <h2 className="mb-2 mt-6 font-display text-[15px] font-bold">
+              Events you work
+            </h2>
+            <ul className="space-y-2">
+              {workingEvents.map((membership) => (
+                <li key={membership.id}>
+                  <Link
+                    href={
+                      membership.canEditEvent
+                        ? `/dashboard/events/${membership.event.id}`
+                        : `/dashboard/events/${membership.event.id}/scan`
+                    }
+                    className="flex items-center justify-between rounded-2xl border-[1.5px] border-line bg-white px-4 py-3"
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-[14px] font-semibold">
+                        {membership.event.name}
+                      </span>
+                      <span className="block text-[12px] text-mute">
+                        {membership.event.startsAt.toLocaleDateString("en-NG", {
+                          day: "numeric",
+                          month: "short",
+                        })}{" "}
+                        · {membership.event.venue.split(",")[0]}
+                      </span>
+                    </span>
+                    <Chip tone={membership.role === "COHOST" ? "plum" : "line"}>
+                      {membership.canCheckIn ? "Scan →" : "View"}
+                    </Chip>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </>
         )}
         </div>
       </div>

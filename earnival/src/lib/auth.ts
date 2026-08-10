@@ -5,6 +5,7 @@ import type { User } from "@prisma/client";
 import { db } from "./db";
 import { generateOpaqueToken, generateOtpCode } from "./ids";
 import { MailError, sendEmail, signInCodeEmail } from "./mail";
+import { attachPendingInvitations } from "./permissions";
 
 const SESSION_COOKIE = "earnival_session";
 const SESSION_TTL_DAYS = 30;
@@ -164,6 +165,9 @@ export async function verifySignInCode(
   });
 
   await attachGuestPurchases(user.id, email);
+  // Cohost and staff invitations are addressed to an email; proving control of
+  // that address is what binds them to an account.
+  await attachPendingInvitations(user.id, email);
   await createSession(user.id);
   return user;
 }

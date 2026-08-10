@@ -12,6 +12,7 @@ import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { initializeTransaction } from "@/lib/paystack";
 import { RATE_LIMITS, RateLimitError, limitRequest } from "@/lib/rate-limit";
+import { clientIp, recordConsent } from "@/lib/legal";
 
 const schema = z.object({
   eventSlug: z.string().min(1).nullable(),
@@ -65,6 +66,14 @@ export async function POST(request: Request) {
       ...parsed.data,
       userId: user?.id ?? null,
     });
+
+    await recordConsent({
+      email: parsed.data.buyer.email,
+      userId: user?.id ?? null,
+      kinds: ["TERMS", "PRIVACY"],
+      ip: clientIp(request),
+      userAgent: request.headers.get("user-agent"),
+    }).catch(() => {});
 
     // Pay-at-event orders are real orders immediately; no charge is raised.
     if (!parsed.data.payNow) {

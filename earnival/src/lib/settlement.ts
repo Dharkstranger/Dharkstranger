@@ -9,6 +9,7 @@ import {
   resolveAccount,
 } from "./paystack";
 import { sendEmail } from "./mail";
+import { alertSettlementFailed, captureError } from "./observability";
 
 /**
  * Settlement — turning ledger balances into money in people's bank accounts.
@@ -234,6 +235,11 @@ async function earliestEntryDate(ids: string[]): Promise<Date> {
 
 /** Unlinks a settlement's entries so they return to the payable pool. */
 async function releaseSettlement(settlementId: string, reason: string): Promise<void> {
+  const settlement = await db.settlement.findUnique({
+    where: { id: settlementId },
+    include: { party: { select: { name: true, email: true } } },
+  });
+
   await db.$transaction([
     db.ledgerEntry.updateMany({
       where: { settlementId },
@@ -244,6 +250,16 @@ async function releaseSettlement(settlementId: string, reason: string): Promise<
       data: { status: "FAILED", failureReason: reason },
     }),
   ]);
+
+  // Money that failed to move must reach a human, not just a log file.
+  if (settlement) {
+    await alertSettlementFailed({
+      reference: settlement.reference,
+      partyLabel: settlement.party.name ?? settlement.party.email,
+      amountKobo: settlement.amountKobo,
+      reason,
+    });
+  }
 }
 
 /**
@@ -305,7 +321,11 @@ async function payOut(settlementId: string): Promise<void> {
       settlementId,
       error instanceof Error ? error.message : String(error),
     );
-    console.error("[settlement] payout failed:", error);
+    await captureError(error, {
+      scope: "settlement.payout",
+      severity: "critical",
+      detail: { settlementId, amountKobo: settlement.amountKobo },
+    });
   }
 }
 

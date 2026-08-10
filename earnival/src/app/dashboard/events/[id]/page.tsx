@@ -4,6 +4,8 @@ import { notFound, redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { eventMoney } from "@/lib/ledger";
+import { eventAccess } from "@/lib/permissions";
+import { eventFunnel } from "@/lib/analytics";
 import { qrDataUrl } from "@/lib/qr";
 import { formatNaira } from "@/lib/money";
 import { Chip, Money, Receipt, StatTile, TopBar, btnClass } from "@/components/ui";
@@ -45,13 +47,30 @@ export default async function EventConsolePage({
         },
         orderBy: { createdAt: "desc" },
       },
+      members: true,
     },
   });
 
   if (!event) notFound();
-  if (event.organiserId !== user.id) notFound();
 
-  const [money, tickets, checkedIn] = await Promise.all([
+  // The console shows money, so it needs edit access — door staff go to the
+  // scanner instead.
+  const access = await eventAccess({
+    userId: user.id,
+    eventId: event.id,
+    capability: "editEvent",
+  });
+  if (!access.allowed) {
+    const doorAccess = await eventAccess({
+      userId: user.id,
+      eventId: event.id,
+      capability: "checkIn",
+    });
+    if (doorAccess.allowed) redirect(`/dashboard/events/${event.id}/scan`);
+    notFound();
+  }
+
+  const [money, tickets, checkedIn, funnel] = await Promise.all([
     eventMoney(event.id),
     db.ticket.findMany({
       where: { eventId: event.id, status: { in: ["VALID", "CHECKED_IN"] } },
@@ -60,6 +79,7 @@ export default async function EventConsolePage({
       take: 200,
     }),
     db.ticket.count({ where: { eventId: event.id, status: "CHECKED_IN" } }),
+    eventFunnel(event.id),
   ]);
 
   const base = process.env.APP_URL || "http://localhost:3000";
@@ -113,10 +133,28 @@ export default async function EventConsolePage({
           <Link href={`/dashboard/events/${event.id}/scan`} className={btnClass("gold")}>
             Scan tickets
           </Link>
+          <Link href={`/dashboard/events/${event.id}/team`} className={btnClass("quiet")}>
+            Team{event.members.length > 0 && ` · ${event.members.length}`}
+          </Link>
+          <Link href={`/dashboard/events/${event.id}/edit`} className={btnClass("quiet")}>
+            Edit event
+          </Link>
           <Link href={`/e/${event.slug}`} className={btnClass("quiet")}>
-            View event page
+            View page
           </Link>
         </div>
+
+        {event.members.filter((m) => m.status === "ACCEPTED" && m.canCheckIn).length ===
+          0 && (
+          <div className="mt-3 rounded-2xl bg-[#FFF1D2] px-3.5 py-2.5 text-[13px] text-[#8a5f00]">
+            <b>You&apos;re the only one who can scan tickets.</b> On the night that
+            means one phone on the gate.{" "}
+            <Link href={`/dashboard/events/${event.id}/team`} className="underline">
+              Add door staff
+            </Link>
+            .
+          </div>
+        )}
 
         {/* Share block — the distribution surface the PRD leans on. */}
         <div className="mt-4 rounded-3xl border-[1.5px] border-line bg-white p-4 text-center lg:max-w-md">
@@ -130,6 +168,39 @@ export default async function EventConsolePage({
           />
           <CopyLink url={shareUrl} />
         </div>
+
+        {/* Funnel — where the link goes after you share it. */}
+        <h2 className="mb-2 mt-6 font-display text-[15px] font-bold">
+          How your link is doing
+        </h2>
+        {funnel.views === 0 ? (
+          <p className="text-[13px] text-mute">
+            Nobody has opened your event page yet. Share the link and this fills in.
+          </p>
+        ) : (
+          <>
+            <div className="grid grid-cols-3 gap-2">
+              <StatTile label="Opened" sub={`${funnel.uniqueVisitors} people`}>
+                {funnel.views}
+              </StatTile>
+              <StatTile label="Started" sub={`${funnel.viewToCheckoutPct}% of opens`}>
+                {funnel.checkoutsStarted}
+              </StatTile>
+              <StatTile label="Bought" sub={`${funnel.viewToPurchasePct}% of opens`}>
+                {funnel.purchases}
+              </StatTile>
+            </div>
+            {funnel.checkoutsStarted > funnel.purchases && (
+              <p className="mt-2 text-[13px] text-mute">
+                {funnel.checkoutsStarted - funnel.purchases} started checkout and
+                didn&apos;t finish
+                {funnel.checkoutToPurchasePct > 0 &&
+                  ` — ${funnel.checkoutToPurchasePct}% of starters complete`}
+                .
+              </p>
+            )}
+          </>
+        )}
 
         {pending.length > 0 && (
           <>

@@ -18,6 +18,9 @@ import {
 } from "@/lib/verification";
 import { RefundError, cancelEventAndRefundAll, refundOrder, refundTickets } from "@/lib/refunds";
 import { SettlementError, addPayoutAccount } from "@/lib/settlement";
+import { PermissionError, assertEventAccess, assertShopAccess } from "@/lib/permissions";
+import { sendEmail } from "@/lib/mail";
+import { recordConsent } from "@/lib/legal";
 
 export interface ActionState {
   error?: string;
@@ -137,6 +140,240 @@ export async function createEventAction(
   revalidatePath("/");
   revalidatePath("/dashboard");
   redirect(`/dashboard/events/${event.id}?created=1`);
+}
+
+const updateEventSchema = z.object({
+  eventId: z.string().min(1),
+  name: z.string().trim().min(3, "Give your event a name"),
+  venue: z.string().trim().min(3, "Where is it happening?"),
+  date: z.string().min(1, "Pick a date"),
+  time: z.string().min(1, "Pick a start time"),
+  description: z.string().trim().max(2000).optional(),
+  organiserNote: z.string().trim().max(500).optional(),
+  bannerUrl: z
+    .string()
+    .regex(/^\/api\/media\/[A-Za-z0-9_-]+$/)
+    .optional()
+    .or(z.literal("")),
+  notifyAttendees: z.boolean(),
+  notifyMessage: z.string().trim().max(500).optional(),
+});
+
+/**
+ * Edits a published event.
+ *
+ * Without this an organiser cannot fix a misspelled venue or move the start
+ * time — they would have to delete and rebuild, losing every ticket sold.
+ * PRD EVT-14 also requires prompting to tell attendees what changed.
+ */
+export async function updateEventAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const user = await requireUser();
+
+  const parsed = updateEventSchema.safeParse({
+    eventId: formData.get("eventId"),
+    name: formData.get("name"),
+    venue: formData.get("venue"),
+    date: formData.get("date"),
+    time: formData.get("time"),
+    description: formData.get("description") || undefined,
+    organiserNote: formData.get("organiserNote") || undefined,
+    bannerUrl: formData.get("bannerUrl") || undefined,
+    notifyAttendees: formData.get("notifyAttendees") === "on",
+    notifyMessage: formData.get("notifyMessage") || undefined,
+  });
+
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Check the form" };
+  }
+  const data = parsed.data;
+
+  try {
+    await assertEventAccess({
+      userId: user.id,
+      eventId: data.eventId,
+      capability: "editEvent",
+    });
+  } catch (error) {
+    return { error: error instanceof PermissionError ? error.message : "Not allowed" };
+  }
+
+  const existing = await db.event.findUniqueOrThrow({
+    where: { id: data.eventId },
+    select: { startsAt: true, venue: true, name: true, slug: true },
+  });
+
+  const startsAt = new Date(`${data.date}T${data.time}:00`);
+  if (Number.isNaN(startsAt.getTime())) return { error: "That date isn't valid" };
+
+  await db.event.update({
+    where: { id: data.eventId },
+    data: {
+      name: data.name,
+      venue: data.venue,
+      startsAt,
+      description: data.description ?? null,
+      organiserNote: data.organiserNote ?? null,
+      bannerUrl: data.bannerUrl || null,
+    },
+  });
+
+  if (data.notifyAttendees) {
+    const changes: string[] = [];
+    if (existing.name !== data.name) changes.push(`Name is now "${data.name}"`);
+    if (existing.venue !== data.venue) changes.push(`Venue is now ${data.venue}`);
+    if (existing.startsAt.getTime() !== startsAt.getTime()) {
+      changes.push(
+        `Starts ${startsAt.toLocaleString("en-NG", {
+          dateStyle: "full",
+          timeStyle: "short",
+        })}`,
+      );
+    }
+    await notifyAttendeesOfChange(data.eventId, data.notifyMessage, changes);
+  }
+
+  revalidatePath(`/dashboard/events/${data.eventId}`);
+  revalidatePath(`/e/${existing.slug}`);
+  revalidatePath("/");
+  return { ok: true, message: "Saved" };
+}
+
+async function notifyAttendeesOfChange(
+  eventId: string,
+  message: string | undefined,
+  changes: string[],
+): Promise<void> {
+  const event = await db.event.findUniqueOrThrow({
+    where: { id: eventId },
+    select: { name: true, slug: true, venue: true, startsAt: true },
+  });
+
+  const holders = await db.ticket.findMany({
+    where: { eventId, status: { in: ["VALID", "CHECKED_IN"] } },
+    select: { attendeeEmail: true, attendeeName: true },
+  });
+
+  // One email per address, not per ticket.
+  const unique = new Map(holders.map((h) => [h.attendeeEmail, h.attendeeName]));
+  const base = process.env.APP_URL || "http://localhost:3000";
+
+  for (const [email, name] of unique) {
+    await sendEmail({
+      to: email,
+      subject: `Update: ${event.name}`,
+      text: [
+        `Hi ${name},`,
+        ``,
+        `There's an update to ${event.name}.`,
+        message ? `\n${message}\n` : "",
+        ...changes,
+        ``,
+        `${event.venue}`,
+        `${event.startsAt.toLocaleString("en-NG", { dateStyle: "full", timeStyle: "short" })}`,
+        ``,
+        `Full details: ${base}/e/${event.slug}`,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      html: `
+        <p>Hi ${name},</p>
+        <p>There's an update to <b>${event.name}</b>.</p>
+        ${message ? `<p>${message}</p>` : ""}
+        ${changes.length ? `<ul>${changes.map((c) => `<li>${c}</li>`).join("")}</ul>` : ""}
+        <p><a href="${base}/e/${event.slug}">See the full details</a></p>`,
+    }).catch(() => {});
+  }
+}
+
+const ticketTypeSchema = z.object({
+  eventId: z.string().min(1),
+  ticketTypeId: z.string().optional(),
+  name: z.string().trim().min(1, "Name the ticket"),
+  price: z.coerce.number().min(0),
+  quantity: z.coerce.number().int().min(1),
+  active: z.boolean(),
+});
+
+/** Adds or edits a ticket type without invalidating tickets already sold. */
+export async function saveTicketTypeAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const user = await requireUser();
+
+  const parsed = ticketTypeSchema.safeParse({
+    eventId: formData.get("eventId"),
+    ticketTypeId: formData.get("ticketTypeId") || undefined,
+    name: formData.get("name"),
+    price: formData.get("price"),
+    quantity: formData.get("quantity"),
+    active: formData.get("active") === "on",
+  });
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Check the form" };
+  }
+  const data = parsed.data;
+
+  try {
+    await assertEventAccess({
+      userId: user.id,
+      eventId: data.eventId,
+      capability: "editEvent",
+    });
+  } catch {
+    return { error: "Not allowed" };
+  }
+
+  if (data.ticketTypeId) {
+    const type = await db.ticketType.findUnique({
+      where: { id: data.ticketTypeId },
+      select: { eventId: true, sold: true, reserved: true, priceKobo: true },
+    });
+    if (!type || type.eventId !== data.eventId) return { error: "Ticket not found" };
+
+    // Capacity can never drop below what has already gone out of the door.
+    const committed = type.sold + type.reserved;
+    if (data.quantity < committed) {
+      return {
+        error: `${committed} already sold or held — capacity can't go below that`,
+      };
+    }
+
+    await db.ticketType.update({
+      where: { id: data.ticketTypeId },
+      data: {
+        name: data.name,
+        // Repricing applies to future sales only; tickets already issued keep
+        // the price they were bought at, which is stored on the ticket.
+        priceKobo: nairaToKobo(data.price),
+        quantity: data.quantity,
+        active: data.active,
+      },
+    });
+  } else {
+    const count = await db.ticketType.count({ where: { eventId: data.eventId } });
+    await db.ticketType.create({
+      data: {
+        eventId: data.eventId,
+        name: data.name,
+        priceKobo: nairaToKobo(data.price),
+        quantity: data.quantity,
+        active: data.active,
+        sortOrder: count,
+      },
+    });
+  }
+
+  const event = await db.event.findUniqueOrThrow({
+    where: { id: data.eventId },
+    select: { slug: true },
+  });
+  revalidatePath(`/dashboard/events/${data.eventId}/edit`);
+  revalidatePath(`/e/${event.slug}`);
+  return { ok: true, message: "Saved" };
 }
 
 /* ------------------------------------------------------------------ */
@@ -263,6 +500,83 @@ export async function addProductAction(
   revalidatePath("/shop");
   revalidatePath(`/s/${shop.slug}`);
   return { ok: true };
+}
+
+const updateProductSchema = z.object({
+  productId: z.string().min(1),
+  name: z.string().trim().min(1, "Name the product"),
+  price: z.coerce.number().min(0),
+  stock: z.coerce.number().int().min(0),
+  emoji: z.string().trim().max(8).optional(),
+  imageUrl: z
+    .string()
+    .regex(/^\/api\/media\/[A-Za-z0-9_-]+$/)
+    .optional()
+    .or(z.literal("")),
+  active: z.boolean(),
+  lowStockThreshold: z.coerce.number().int().min(0).max(1000),
+});
+
+export async function updateProductAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const user = await requireUser();
+
+  const parsed = updateProductSchema.safeParse({
+    productId: formData.get("productId"),
+    name: formData.get("name"),
+    price: formData.get("price"),
+    stock: formData.get("stock"),
+    emoji: formData.get("emoji") || undefined,
+    imageUrl: formData.get("imageUrl") || undefined,
+    active: formData.get("active") === "on",
+    lowStockThreshold: formData.get("lowStockThreshold") || 1,
+  });
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Check the form" };
+  }
+  const data = parsed.data;
+
+  const product = await db.product.findUnique({
+    where: { id: data.productId },
+    select: { shopId: true, reserved: true, shop: { select: { slug: true } } },
+  });
+  if (!product) return { error: "Product not found" };
+
+  try {
+    await assertShopAccess({
+      userId: user.id,
+      shopId: product.shopId,
+      capability: "editProducts",
+    });
+  } catch (error) {
+    return { error: error instanceof PermissionError ? error.message : "Not allowed" };
+  }
+
+  // Stock can't fall below what in-flight checkouts are already holding.
+  if (data.stock < product.reserved) {
+    return {
+      error: `${product.reserved} are held by checkouts in progress — stock can't go below that`,
+    };
+  }
+
+  await db.product.update({
+    where: { id: data.productId },
+    data: {
+      name: data.name,
+      priceKobo: nairaToKobo(data.price),
+      stock: data.stock,
+      emoji: data.emoji || null,
+      imageUrl: data.imageUrl || null,
+      active: data.active,
+      lowStockThreshold: data.lowStockThreshold,
+    },
+  });
+
+  revalidatePath("/shop");
+  revalidatePath(`/s/${product.shop.slug}`);
+  return { ok: true, message: "Saved" };
 }
 
 /* ------------------------------------------------------------------ */
@@ -426,6 +740,16 @@ export async function submitIdentityAction(
   const kind = String(formData.get("kind") ?? "BVN");
   if (kind !== "BVN" && kind !== "NIN") return { error: "Choose BVN or NIN" };
 
+  // NDPR: processing an identity document needs demonstrable consent.
+  if (formData.get("kycConsent") !== "on") {
+    return { error: "Please confirm you agree to us processing your ID" };
+  }
+  await recordConsent({
+    email: user.email,
+    userId: user.id,
+    kinds: ["KYC_PROCESSING"],
+  }).catch(() => {});
+
   try {
     await submitIdentity({
       userId: user.id,
@@ -577,6 +901,298 @@ export async function cancelEventAction(
 }
 
 /* ------------------------------------------------------------------ */
+/* Team — cohosts and shop staff                                       */
+/* ------------------------------------------------------------------ */
+
+const inviteSchema = z.object({
+  eventId: z.string().min(1),
+  email: z.string().trim().email("Enter a valid email"),
+  role: z.enum(["COHOST", "DOOR_STAFF"]),
+  canCheckIn: z.boolean(),
+  canEditEvent: z.boolean(),
+  canManageShops: z.boolean(),
+  canRefund: z.boolean(),
+  earns: z.boolean(),
+  shareType: z.enum(["NONE", "FLAT", "PERCENT"]),
+  sharePct: z.coerce.number().min(0).max(100).optional(),
+  shareFlatNaira: z.coerce.number().min(0).optional(),
+  revenueLine: z.enum(["TICKET_SALES", "SHOP_SHARE", "SPONSOR"]),
+});
+
+export async function inviteEventMemberAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const user = await requireUser();
+
+  const parsed = inviteSchema.safeParse({
+    eventId: formData.get("eventId"),
+    email: formData.get("email"),
+    role: formData.get("role") || "DOOR_STAFF",
+    canCheckIn: formData.get("canCheckIn") === "on",
+    canEditEvent: formData.get("canEditEvent") === "on",
+    canManageShops: formData.get("canManageShops") === "on",
+    canRefund: formData.get("canRefund") === "on",
+    earns: formData.get("earns") === "on",
+    shareType: formData.get("shareType") || "NONE",
+    sharePct: formData.get("sharePct") || undefined,
+    shareFlatNaira: formData.get("shareFlatNaira") || undefined,
+    revenueLine: formData.get("revenueLine") || "TICKET_SALES",
+  });
+
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Check the form" };
+  }
+  const data = parsed.data;
+
+  try {
+    await assertEventAccess({
+      userId: user.id,
+      eventId: data.eventId,
+      capability: "editEvent",
+      message: "Only the organiser can change the team",
+    });
+  } catch (error) {
+    return { error: error instanceof PermissionError ? error.message : "Not allowed" };
+  }
+
+  const email = data.email.toLowerCase();
+  const event = await db.event.findUniqueOrThrow({
+    where: { id: data.eventId },
+    select: { name: true, slug: true, organiser: { select: { email: true, name: true } } },
+  });
+
+  if (email === event.organiser.email) {
+    return { error: "You already own this event" };
+  }
+
+  const existing = await db.eventMember.findUnique({
+    where: { eventId_inviteEmail: { eventId: data.eventId, inviteEmail: email } },
+  });
+  if (existing && existing.status !== "REVOKED") {
+    return { error: "That person has already been invited" };
+  }
+
+  const invitee = await db.user.findUnique({ where: { email }, select: { id: true } });
+
+  const payload = {
+    role: data.role,
+    status: "PENDING" as const,
+    canCheckIn: data.canCheckIn,
+    canEditEvent: data.canEditEvent,
+    canManageShops: data.canManageShops,
+    canRefund: data.canRefund,
+    earns: data.earns,
+    shareType: data.earns ? data.shareType : ("NONE" as const),
+    shareBps:
+      data.earns && data.shareType === "PERCENT"
+        ? Math.round((data.sharePct ?? 0) * 100)
+        : null,
+    shareFlatKobo:
+      data.earns && data.shareType === "FLAT"
+        ? nairaToKobo(data.shareFlatNaira ?? 0)
+        : null,
+    revenueLine: data.revenueLine,
+    userId: invitee?.id ?? null,
+    invitedById: user.id,
+    respondedAt: null,
+  };
+
+  if (existing) {
+    await db.eventMember.update({ where: { id: existing.id }, data: payload });
+  } else {
+    await db.eventMember.create({
+      data: { eventId: data.eventId, inviteEmail: email, ...payload },
+    });
+  }
+
+  const base = process.env.APP_URL || "http://localhost:3000";
+  await sendEmail({
+    to: email,
+    subject: `${event.organiser.name ?? "An organiser"} added you to ${event.name}`,
+    text: [
+      `You've been invited to help run ${event.name} on Earnival.`,
+      data.canCheckIn ? "You can check guests in at the gate." : "",
+      "",
+      `Accept here: ${base}/dashboard/invitations`,
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    html: `<p>You've been invited to help run <b>${event.name}</b> on Earnival.</p>
+      ${data.canCheckIn ? "<p>You'll be able to check guests in at the gate.</p>" : ""}
+      <p><a href="${base}/dashboard/invitations">Accept the invitation</a></p>`,
+  }).catch(() => {});
+
+  revalidatePath(`/dashboard/events/${data.eventId}/team`);
+  return { ok: true, message: `Invitation sent to ${email}` };
+}
+
+export async function respondToEventInviteAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const user = await requireUser();
+  const memberId = String(formData.get("memberId") ?? "");
+  const accept = String(formData.get("decision") ?? "") === "accept";
+
+  const member = await db.eventMember.findUnique({ where: { id: memberId } });
+  if (!member) return { error: "Invitation not found" };
+  // Bind by email as well as user id: the row may predate their account.
+  if (member.userId !== user.id && member.inviteEmail !== user.email) {
+    return { error: "That invitation isn't for you" };
+  }
+  if (member.status !== "PENDING") return { error: "Already responded" };
+
+  await db.eventMember.update({
+    where: { id: memberId },
+    data: {
+      status: accept ? "ACCEPTED" : "REJECTED",
+      userId: user.id,
+      respondedAt: new Date(),
+    },
+  });
+
+  revalidatePath("/dashboard/invitations");
+  revalidatePath("/dashboard");
+  return { ok: true };
+}
+
+export async function revokeEventMemberAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const user = await requireUser();
+  const memberId = String(formData.get("memberId") ?? "");
+
+  const member = await db.eventMember.findUnique({ where: { id: memberId } });
+  if (!member) return { error: "Not found" };
+
+  try {
+    await assertEventAccess({
+      userId: user.id,
+      eventId: member.eventId,
+      capability: "editEvent",
+    });
+  } catch {
+    return { error: "Not allowed" };
+  }
+
+  // Revoked rather than deleted: any revenue already credited must stay
+  // attributable in the ledger.
+  await db.eventMember.update({
+    where: { id: memberId },
+    data: { status: "REVOKED" },
+  });
+
+  revalidatePath(`/dashboard/events/${member.eventId}/team`);
+  return { ok: true };
+}
+
+const shopInviteSchema = z.object({
+  shopId: z.string().min(1),
+  email: z.string().trim().email("Enter a valid email"),
+  canCreateOrders: z.boolean(),
+  canFulfilOrders: z.boolean(),
+  canEditProducts: z.boolean(),
+  canRefund: z.boolean(),
+});
+
+export async function inviteShopMemberAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const user = await requireUser();
+
+  const parsed = shopInviteSchema.safeParse({
+    shopId: formData.get("shopId"),
+    email: formData.get("email"),
+    canCreateOrders: formData.get("canCreateOrders") === "on",
+    canFulfilOrders: formData.get("canFulfilOrders") === "on",
+    canEditProducts: formData.get("canEditProducts") === "on",
+    canRefund: formData.get("canRefund") === "on",
+  });
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Check the form" };
+  }
+
+  const shop = await db.shop.findUnique({
+    where: { id: parsed.data.shopId },
+    select: { ownerId: true, name: true },
+  });
+  if (!shop || shop.ownerId !== user.id) {
+    return { error: "Only the shop owner can add staff" };
+  }
+
+  const email = parsed.data.email.toLowerCase();
+  const invitee = await db.user.findUnique({ where: { email }, select: { id: true } });
+
+  const existing = await db.shopMember.findUnique({
+    where: { shopId_inviteEmail: { shopId: parsed.data.shopId, inviteEmail: email } },
+  });
+  if (existing && existing.status !== "REVOKED") {
+    return { error: "That person has already been invited" };
+  }
+
+  const payload = {
+    status: "PENDING" as const,
+    canCreateOrders: parsed.data.canCreateOrders,
+    canFulfilOrders: parsed.data.canFulfilOrders,
+    canEditProducts: parsed.data.canEditProducts,
+    canRefund: parsed.data.canRefund,
+    userId: invitee?.id ?? null,
+    invitedById: user.id,
+    respondedAt: null,
+  };
+
+  if (existing) {
+    await db.shopMember.update({ where: { id: existing.id }, data: payload });
+  } else {
+    await db.shopMember.create({
+      data: { shopId: parsed.data.shopId, inviteEmail: email, ...payload },
+    });
+  }
+
+  const base = process.env.APP_URL || "http://localhost:3000";
+  await sendEmail({
+    to: email,
+    subject: `You've been added to ${shop.name}`,
+    text: `You've been invited to work at ${shop.name} on Earnival.\n\nAccept here: ${base}/dashboard/invitations`,
+    html: `<p>You've been invited to work at <b>${shop.name}</b> on Earnival.</p><p><a href="${base}/dashboard/invitations">Accept the invitation</a></p>`,
+  }).catch(() => {});
+
+  revalidatePath("/shop/team");
+  return { ok: true, message: `Invitation sent to ${email}` };
+}
+
+export async function respondToShopInviteAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const user = await requireUser();
+  const memberId = String(formData.get("memberId") ?? "");
+  const accept = String(formData.get("decision") ?? "") === "accept";
+
+  const member = await db.shopMember.findUnique({ where: { id: memberId } });
+  if (!member) return { error: "Invitation not found" };
+  if (member.userId !== user.id && member.inviteEmail !== user.email) {
+    return { error: "That invitation isn't for you" };
+  }
+  if (member.status !== "PENDING") return { error: "Already responded" };
+
+  await db.shopMember.update({
+    where: { id: memberId },
+    data: {
+      status: accept ? "ACCEPTED" : "REJECTED",
+      userId: user.id,
+      respondedAt: new Date(),
+    },
+  });
+
+  revalidatePath("/dashboard/invitations");
+  return { ok: true };
+}
+
+/* ------------------------------------------------------------------ */
 /* Admin                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -616,6 +1232,62 @@ export async function reviewEventAction(
   revalidatePath("/admin");
   revalidatePath(`/e/${event.slug}`);
   return { ok: true };
+}
+
+/**
+ * Re-runs a webhook delivery that failed processing. The stored payload is
+ * replayed through the same settle path, which is idempotent — so a replay
+ * that turns out to have already succeeded is a no-op rather than a double
+ * credit.
+ */
+export async function replayWebhookAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  await requireAdmin();
+  const id = String(formData.get("webhookEventId") ?? "");
+
+  const record = await db.webhookEvent.findUnique({ where: { id } });
+  if (!record) return { error: "Not found" };
+
+  const payload = record.payload as { data?: { reference?: string; id?: number } } | null;
+  const reference = payload?.data?.reference;
+  if (!reference) return { error: "That delivery has no reference to replay" };
+
+  try {
+    const { settlePayment, failPayment } = await import("@/lib/commerce");
+    const { markTransferOutcome } = await import("@/lib/settlement");
+
+    switch (record.eventType) {
+      case "charge.success":
+        await settlePayment(reference, payload?.data);
+        break;
+      case "charge.failed":
+        await failPayment(reference);
+        break;
+      case "transfer.success":
+        await markTransferOutcome(reference, "PAID");
+        break;
+      case "transfer.failed":
+      case "transfer.reversed":
+        await markTransferOutcome(reference, "FAILED", "Replayed after failure");
+        break;
+      default:
+        return { error: `No replay handler for ${record.eventType}` };
+    }
+
+    await db.webhookEvent.update({
+      where: { id },
+      data: { processedAt: new Date(), error: null },
+    });
+
+    revalidatePath("/admin");
+    return { ok: true, message: "Replayed successfully" };
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : "Replay failed",
+    };
+  }
 }
 
 export async function reviewVerificationAction(

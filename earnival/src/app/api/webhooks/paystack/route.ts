@@ -5,6 +5,7 @@ import { failPayment, settlePayment } from "@/lib/commerce";
 import { markRefundOutcome } from "@/lib/refunds";
 import { markTransferOutcome } from "@/lib/settlement";
 import { verifyWebhookSignature } from "@/lib/paystack";
+import { alertWebhookUnprocessed, captureError } from "@/lib/observability";
 
 /**
  * Paystack webhook — the authoritative source of payment truth.
@@ -106,10 +107,21 @@ export async function POST(request: Request) {
       data: { processedAt: new Date() },
     });
   } catch (error) {
-    console.error("[webhook/paystack] processing failed:", error);
+    const reason = error instanceof Error ? error.message : String(error);
     await db.webhookEvent.updateMany({
       where: { provider: "paystack", externalId },
-      data: { error: error instanceof Error ? error.message : String(error) },
+      data: { error: reason },
+    });
+    await captureError(error, {
+      scope: "webhook.paystack",
+      severity: "critical",
+      detail: { eventType, externalId },
+    });
+    await alertWebhookUnprocessed({
+      provider: "paystack",
+      eventType,
+      externalId,
+      reason,
     });
     // Still 200: the delivery is stored and can be replayed from the admin side.
   }

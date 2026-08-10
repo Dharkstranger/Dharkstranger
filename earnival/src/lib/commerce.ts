@@ -26,6 +26,8 @@ import {
 } from "./mail";
 import { checkRevenueCap } from "./verification";
 import { notifyVendorLowStock, notifyVendorOfSale } from "./notify";
+import { eventAccess, shopAccess } from "./permissions";
+import { ANALYTICS, track } from "./analytics";
 
 export class SoldOutError extends Error {}
 export class CheckoutError extends Error {}
@@ -542,6 +544,17 @@ export async function settlePayment(
     await sendPostPaymentEmails(reference).catch((error) =>
       console.error("[commerce] post-payment email failed:", error),
     );
+    // Recorded server-side so the conversion count reflects money actually
+    // taken, not a button that was clicked.
+    await track({
+      name:
+        result.payment.purpose === "TICKETS"
+          ? ANALYTICS.ticketPurchased
+          : ANALYTICS.orderPlaced,
+      eventId: result.payment.eventId,
+      userId: result.payment.userId,
+      properties: { amountKobo: result.payment.amountKobo },
+    });
   }
   return { settled: result.settled };
 }
@@ -587,6 +600,100 @@ async function settleTickets(tx: Tx, paymentId: string): Promise<void> {
       description: line.description,
     })),
   });
+
+  await settleCohostShares(tx, {
+    eventId: event.id,
+    eventName: event.name,
+    organiserId: event.organiserId,
+    organiserNetKobo: split.organiserNetKobo,
+    revenueLine: "TICKET_SALES",
+    paymentId,
+  });
+}
+
+/**
+ * Pays mapped cohosts out of the organiser's line (PRD EVT-13, §8: "Cohost
+ * settlement applies per mapped revenue line against the organiser's share —
+ * never the vendor's").
+ *
+ * Percentage shares apply to every payment. Flat shares are a one-off per
+ * event, so they are applied only if this member has not already been credited
+ * for it — otherwise a flat ₦50,000 would be owed again on every ticket sold.
+ */
+async function settleCohostShares(
+  tx: Tx,
+  params: {
+    eventId: string;
+    eventName: string;
+    organiserId: string;
+    organiserNetKobo: number;
+    revenueLine: "TICKET_SALES" | "SHOP_SHARE";
+    paymentId?: string;
+    orderId?: string;
+  },
+): Promise<void> {
+  const { organiserNetKobo } = params;
+  if (organiserNetKobo <= 0) return;
+
+  const cohosts = await tx.eventMember.findMany({
+    where: {
+      eventId: params.eventId,
+      status: "ACCEPTED",
+      earns: true,
+      revenueLine: params.revenueLine,
+      userId: { not: null },
+    },
+  });
+  if (cohosts.length === 0) return;
+
+  let remaining = organiserNetKobo;
+  const entries: Prisma.LedgerEntryCreateManyInput[] = [];
+
+  for (const cohost of cohosts) {
+    let amount = 0;
+
+    if (cohost.shareType === "PERCENT" && cohost.shareBps) {
+      amount = Math.round((organiserNetKobo * cohost.shareBps) / 10_000);
+    } else if (cohost.shareType === "FLAT" && cohost.shareFlatKobo) {
+      const alreadyPaid = await tx.ledgerEntry.count({
+        where: {
+          eventId: params.eventId,
+          partyId: cohost.userId,
+          account: "COHOST_SHARE",
+        },
+      });
+      if (alreadyPaid === 0) amount = cohost.shareFlatKobo;
+    }
+
+    // A cohost can never be paid more than the organiser actually earned.
+    amount = Math.min(amount, remaining);
+    if (amount <= 0) continue;
+    remaining -= amount;
+
+    entries.push(
+      {
+        account: "COHOST_SHARE",
+        amountKobo: amount,
+        partyId: cohost.userId,
+        paymentId: params.paymentId ?? null,
+        orderId: params.orderId ?? null,
+        eventId: params.eventId,
+        description: `Cohost share — ${params.eventName}`,
+      },
+      {
+        // The matching debit, so the organiser's balance reflects it.
+        account: "COHOST_SHARE",
+        amountKobo: -amount,
+        partyId: params.organiserId,
+        paymentId: params.paymentId ?? null,
+        orderId: params.orderId ?? null,
+        eventId: params.eventId,
+        description: `Cohost share paid out — ${params.eventName}`,
+      },
+    );
+  }
+
+  if (entries.length > 0) await tx.ledgerEntry.createMany({ data: entries });
 }
 
 async function settleOrders(tx: Tx, paymentId: string): Promise<void> {
@@ -630,6 +737,20 @@ async function settleOrders(tx: Tx, paymentId: string): Promise<void> {
         description: line.description,
       })),
     });
+
+    // Cohosts mapped to the shop-share line take their cut of the organiser's
+    // connection share, not the vendor's proceeds.
+    if (order.event && split.organiserShareKobo > 0) {
+      await settleCohostShares(tx, {
+        eventId: order.event.id,
+        eventName: order.event.name,
+        organiserId: order.event.organiserId,
+        organiserNetKobo: split.organiserShareKobo,
+        revenueLine: "SHOP_SHARE",
+        paymentId,
+        orderId: order.id,
+      });
+    }
   }
 }
 
@@ -715,7 +836,13 @@ export async function advanceOrder(
     include: { shop: true },
   });
   if (!order) throw new CheckoutError("Order not found");
-  if (order.shop.ownerId !== actorUserId) {
+
+  const access = await shopAccess({
+    userId: actorUserId,
+    shopId: order.shopId,
+    capability: "fulfilOrders",
+  });
+  if (!access.allowed) {
     throw new CheckoutError("You don't have access to that order");
   }
 
@@ -830,8 +957,15 @@ export async function checkInTicket(params: {
   if (ticket.eventId !== eventId) {
     return { ok: false, message: "That ticket is for a different event" };
   }
-  if (ticket.event.organiserId !== actorUserId) {
-    return { ok: false, message: "You don't run this event" };
+
+  // Owner, or anyone the organiser gave door duty to.
+  const access = await eventAccess({
+    userId: actorUserId,
+    eventId,
+    capability: "checkIn",
+  });
+  if (!access.allowed) {
+    return { ok: false, message: "You're not on the door team for this event" };
   }
   if (ticket.status === "PENDING_PAYMENT") {
     return { ok: false, message: "That ticket was never paid for" };

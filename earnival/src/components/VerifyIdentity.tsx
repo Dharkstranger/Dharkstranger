@@ -56,12 +56,30 @@ export function VerifyIdentity() {
         </p>
       )}
 
+      <label className="mb-3 flex items-start gap-2.5 rounded-xl bg-paper px-3 py-2.5 text-[12px] leading-relaxed">
+        <input
+          type="checkbox"
+          required
+          name="kycConsent"
+          className="mt-0.5 h-5 w-5 shrink-0 accent-plum"
+        />
+        <span>
+          I agree to Earnival processing my {kind} to verify my identity, as described
+          in the{" "}
+          <a href="/privacy" className="font-semibold text-plum underline">
+            privacy policy
+          </a>
+          .
+        </span>
+      </label>
+
       <button type="submit" disabled={pending} className={btnClass("primary")}>
         {pending ? "Submitting…" : "Submit for review"}
       </button>
 
       <p className="mt-2 text-[12px] text-mute">
-        Encrypted before storage. Only the last four digits are ever displayed.
+        Encrypted before storage with a key held separately from the database. Only
+        the last four digits are ever displayed.
       </p>
     </form>
   );

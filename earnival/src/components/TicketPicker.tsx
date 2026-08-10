@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { formatNaira, buyerTotal } from "@/lib/money";
+import { PolicyNote } from "./PolicyNote";
 import { btnClass } from "./ui";
 
 interface TicketTypeView {
@@ -13,9 +14,11 @@ interface TicketTypeView {
 
 export function TicketPicker({
   eventSlug,
+  eventId,
   ticketTypes,
 }: {
   eventSlug: string;
+  eventId: string;
   ticketTypes: TicketTypeView[];
 }) {
   const [quantities, setQuantities] = useState<Record<string, number>>({});
@@ -134,7 +137,17 @@ export function TicketPicker({
       {count > 0 && !showForm && (
         <button
           type="button"
-          onClick={() => setShowForm(true)}
+          onClick={() => {
+            setShowForm(true);
+            void fetch("/api/track", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                name: "ticket.checkout_started",
+                eventId,
+              }),
+            }).catch(() => {});
+          }}
           className={`${btnClass("flame")} mt-3`}
         >
           Continue · {formatNaira(totals.totalKobo)}
@@ -215,6 +228,7 @@ export function TicketPicker({
           <p className="mt-2 text-center text-[12px] text-mute">
             Secured by Paystack
           </p>
+          <PolicyNote context="ticket" />
         </form>
       )}
     </div>

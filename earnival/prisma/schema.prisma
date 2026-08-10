@@ -13,7 +13,14 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+  /// Pooled connection. Serverless functions each open their own connection,
+  /// and Postgres caps out around 100 — a ticket drop exhausts that and every
+  /// request 500s. Point this at a PgBouncer/Neon/Supabase pooler in
+  /// production.
   url      = env("DATABASE_URL")
+  /// Unpooled connection, used only for migrations, which poolers cannot run.
+  /// Falls back to DATABASE_URL locally where the two are the same.
+  directUrl = env("DIRECT_DATABASE_URL")
 }
 
 // ============================================================
@@ -59,6 +66,150 @@ model User {
   verifications  VerificationSubmission[]
   reviewedEvents Event[]         @relation("EventReviewer")
   mediaAssets    MediaAsset[]
+  eventMemberships EventMember[] @relation("EventMemberships")
+  shopMemberships  ShopMember[]  @relation("ShopMemberships")
+}
+
+// ============================================================
+// Teams — cohosts and shop staff (PRD EVT-13, SHP-12)
+// ============================================================
+
+enum TeamRole {
+  /// Delegate who can help run the event and may earn a revenue line.
+  COHOST
+  /// Works the gate only.
+  DOOR_STAFF
+}
+
+enum MemberStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  REVOKED
+}
+
+enum ShareType {
+  NONE
+  FLAT
+  PERCENT
+}
+
+enum RevenueLine {
+  TICKET_SALES
+  SHOP_SHARE
+  SPONSOR
+}
+
+/// Someone other than the organiser who can act on an event.
+///
+/// Without this, exactly one person can check guests in — which means the
+/// organiser stands at the gate all night holding their own phone, and
+/// check-in stops if there is a second entrance.
+///
+/// Invitations are addressed to an email rather than a user, so someone can be
+/// added before they have an account; the row binds to them on sign-in.
+model EventMember {
+  id          String       @id @default(cuid())
+  eventId     String
+  userId      String?
+  inviteEmail String
+  role        TeamRole     @default(DOOR_STAFF)
+  status      MemberStatus @default(PENDING)
+
+  // Capabilities, mapped per member.
+  canCheckIn     Boolean @default(true)
+  canEditEvent   Boolean @default(false)
+  canManageShops Boolean @default(false)
+  canRefund      Boolean @default(false)
+
+  /// Cohost earnings come out of the ORGANISER's share, never the vendor's.
+  earns         Boolean     @default(false)
+  shareType     ShareType   @default(NONE)
+  shareBps      Int?
+  shareFlatKobo Int?
+  revenueLine   RevenueLine @default(TICKET_SALES)
+
+  invitedById String
+  respondedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user  User? @relation("EventMemberships", fields: [userId], references: [id])
+
+  @@unique([eventId, inviteEmail])
+  @@index([userId, status])
+  @@index([inviteEmail])
+}
+
+/// A vendor's staff (PRD SHP-12).
+model ShopMember {
+  id          String       @id @default(cuid())
+  shopId      String
+  userId      String?
+  inviteEmail String
+  status      MemberStatus @default(PENDING)
+
+  canCreateOrders Boolean @default(true)
+  canFulfilOrders Boolean @default(true)
+  canEditProducts Boolean @default(false)
+  canRefund       Boolean @default(false)
+
+  invitedById String
+  respondedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  shop Shop  @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  user User? @relation("ShopMemberships", fields: [userId], references: [id])
+
+  @@unique([shopId, inviteEmail])
+  @@index([userId, status])
+  @@index([inviteEmail])
+}
+
+// ============================================================
+// Consent & telemetry
+// ============================================================
+
+enum ConsentKind {
+  TERMS
+  PRIVACY
+  MARKETING
+  KYC_PROCESSING
+}
+
+/// Evidence that a person agreed to something, and to which version.
+/// NDPR requires consent to be demonstrable, not merely claimed.
+model ConsentRecord {
+  id              String      @id @default(cuid())
+  email           String
+  userId          String?
+  kind            ConsentKind
+  documentVersion String
+  granted         Boolean     @default(true)
+  /// Hashed, never the raw address — it is personal data in its own right.
+  ipHash          String?
+  userAgent       String?
+  createdAt       DateTime    @default(now())
+
+  @@index([email, kind])
+  @@index([userId])
+}
+
+/// Funnel events. Deliberately schemaless in `properties` so new questions can
+/// be asked without a migration, and free of direct identifiers.
+model AnalyticsEvent {
+  id         String   @id @default(cuid())
+  name       String
+  eventId    String?
+  shopId     String?
+  /// Rotating per-visitor id from a first-party cookie; not a user id.
+  visitorId  String?
+  userId     String?
+  properties Json?
+  createdAt  DateTime @default(now())
+
+  @@index([name, createdAt])
+  @@index([eventId, name])
 }
 
 enum KycKind {
@@ -219,6 +370,7 @@ model Event {
   orders        Order[]
   payments      Payment[]
   ledgerEntries LedgerEntry[]
+  members       EventMember[]
   reviewedBy    User?         @relation("EventReviewer", fields: [reviewedById], references: [id])
 
   @@index([status, startsAt])
@@ -336,6 +488,7 @@ model Shop {
   connections   Connection[]
   orders        Order[]
   ledgerEntries LedgerEntry[]
+  members       ShopMember[]
 
   @@index([ownerId])
 }
@@ -580,6 +733,8 @@ enum LedgerAccount {
   PLATFORM_SERVICE_FEE
   /// Organiser's connection share of a vendor's sales.
   ORGANISER_SHARE
+  /// A cohost's mapped cut, always taken out of the organiser's line.
+  COHOST_SHARE
   /// Net payable to the vendor.
   VENDOR_NET
   /// Net payable to the organiser from ticket sales.

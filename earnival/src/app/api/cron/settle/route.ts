@@ -3,6 +3,8 @@ import { timingSafeEqual } from "node:crypto";
 
 import { releaseExpiredReservations } from "@/lib/commerce";
 import { runSettlements } from "@/lib/settlement";
+import { purgeExpiredCounters } from "@/lib/rate-limit";
+import { purgeOldAnalytics } from "@/lib/analytics";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -36,9 +38,16 @@ export async function POST(request: Request) {
 
   const released = await releaseExpiredReservations();
   const settlements = await runSettlements();
+  // Housekeeping, cheap and safe to run on every sweep.
+  const [purgedCounters, purgedAnalytics] = await Promise.all([
+    purgeExpiredCounters().catch(() => 0),
+    purgeOldAnalytics().catch(() => 0),
+  ]);
 
   return NextResponse.json({
     releasedReservations: released,
+    purgedCounters,
+    purgedAnalytics,
     settlements: {
       considered: settlements.considered,
       settled: settlements.settled,

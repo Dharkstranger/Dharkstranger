@@ -38,6 +38,11 @@ the core loop:
 | WhatsApp / SMS vendor sale alerts | ✅ |
 | Rate limiting and security headers | ✅ |
 | Desktop console layouts | ✅ |
+| Cohosts and shop staff with mapped permissions | ✅ |
+| Event and product editing, with attendee notification | ✅ |
+| Health check, error tracking and money alerts | ✅ |
+| Terms, privacy policy and demonstrable consent | ✅ |
+| Funnel telemetry in the organiser console | ✅ |
 
 Deliberately **not** in this cut (Phase 2–3 in the PRD): plan tiers, wallet,
 cohosts, series, booths, ad space, chatrooms, shop-to-shop transfer, Earnit,
@@ -143,6 +148,37 @@ curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://…/api/cron/settle
 
 ---
 
+## Running a real event
+
+**More than one person can work the gate.** `EventMember` maps capabilities
+per person — check in, edit, manage shops, refund — so an organiser can put
+three phones on two entrances. Door staff never see the money: the console
+redirects them straight to the scanner. Invitations are addressed to an email
+and bind to the account when that person first signs in, so they can be added
+before they've ever used Earnival.
+
+**Cohosts earn out of the organiser's pocket, never the vendor's** (PRD §8).
+Percentage shares apply per payment; flat fees are one-off per event, guarded
+so a ₦50,000 fee isn't owed again on every ticket. Several cohosts can share
+the organiser's line but never overdraw it — the last one in is capped at
+what's left.
+
+**Events and products are editable after publishing.** Ticket capacity can
+never drop below what's already sold or held, repricing applies to future
+sales only, and editing prompts to email everyone holding a ticket (EVT-14).
+
+**When something breaks, someone finds out.** `/api/health` reports database
+reachability and which integrations are configured. Failed settlements,
+failed refunds and unprocessable webhooks push to Sentry and a Slack/Discord
+webhook — a refund that reversed in the ledger but didn't move cash is a
+`critical`. Failed webhooks can be replayed from the admin console; replay is
+safe because settlement is idempotent.
+
+**Connection pooling is not optional.** Serverless functions each open their
+own Postgres connection and Postgres caps out around 100 — a ticket drop
+exhausts it and everything 500s. `DATABASE_URL` must point at a pooler;
+`DIRECT_DATABASE_URL` is the unpooled connection migrations need.
+
 ## Security posture
 
 Attacks this codebase actively defends against, and how:
@@ -230,7 +266,7 @@ payment keys is a broken deploy, not a simulated one.
 npm test
 ```
 
-71 tests:
+82 tests:
 
 - **25 unit tests** on the money engine, including the PRD §8 worked example and
   a ~300-combination invariant sweep.
@@ -243,6 +279,12 @@ npm test
   live, so a failure means a real vulnerability has returned: reference
   collisions, rate-limit exhaustion and isolation, lookup-token forgery and
   expiry, upload format spoofing, and the sandbox guard on a real domain.
+- **11 integration tests** on the event-day kit: door access before and after
+  an invitation is accepted, a second person actually checking a guest in,
+  revoked members losing access, per-capability shop gating, invitations that
+  predate an account, cohost percentage and flat-fee settlement, multiple
+  cohosts sharing without overdrawing the organiser, and demonstrable consent
+  with a hashed IP.
 
 ---
 
@@ -276,6 +318,12 @@ Still open:
 - **Decision #13 — pre-event ticket payouts.** Post-event cadence sidesteps this
   for L0–L1, but daily settlement at L2+ pays out ticket revenue before the
   event happens. Confirm that is acceptable to the CBN before going live.
+
+**Never exercised against real Paystack.** Every payment, refund and transfer
+in this codebase has only ever run against a sandbox returning canned
+responses. Before trusting payouts, check whether **Transfers require OTP** on
+your account — it is on by default, and if it is, `initiateTransfer` will
+appear to succeed and then hang forever.
 
 Also outstanding before launch:
 

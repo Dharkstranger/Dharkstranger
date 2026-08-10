@@ -59,6 +59,23 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           {/* Single main landmark for the whole app; console routes widen
               themselves from inside via ConsoleShell. */}
           <main id="main">{children}</main>
+
+          <footer className="border-t border-line px-4 py-6 text-center text-[12px] text-mute">
+            <nav aria-label="Legal and support">
+              <a href="/terms" className="underline underline-offset-2">
+                Terms
+              </a>
+              <span aria-hidden> · </span>
+              <a href="/privacy" className="underline underline-offset-2">
+                Privacy
+              </a>
+              <span aria-hidden> · </span>
+              <a href="/find" className="underline underline-offset-2">
+                Find my ticket
+              </a>
+            </nav>
+            <p className="mt-2">Earnival — commerce infrastructure for events.</p>
+          </footer>
         </div>
       </body>
     </html>

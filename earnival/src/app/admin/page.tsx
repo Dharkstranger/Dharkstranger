@@ -7,6 +7,7 @@ import { formatNaira } from "@/lib/money";
 import { Chip, TopBar } from "@/components/ui";
 import { ReviewEvent } from "@/components/ReviewEvent";
 import { ReviewVerification } from "@/components/ReviewVerification";
+import { ReplayWebhook } from "@/components/ReplayWebhook";
 
 export const metadata = { title: "Admin", robots: { index: false } };
 export const dynamic = "force-dynamic";
@@ -49,6 +50,12 @@ export default async function AdminPage() {
       take: 10,
     }),
   ]);
+
+  const failedWebhooks = await db.webhookEvent.findMany({
+    where: { processedAt: null, error: { not: null } },
+    orderBy: { createdAt: "desc" },
+    take: 10,
+  });
 
   return (
     <div className="pb-16">
@@ -181,6 +188,42 @@ export default async function AdminPage() {
                     {refund.reason.toLowerCase().replace(/_/g, " ")}
                     {refund.failureReason && ` · ${refund.failureReason}`}
                   </div>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+
+        {failedWebhooks.length > 0 && (
+          <>
+            <h2 className="mb-2 mt-6 font-display text-[15px] font-bold">
+              Webhooks that failed to process
+            </h2>
+            <p className="mb-2 text-[13px] text-mute">
+              Replaying is safe — settlement is idempotent, so one that already
+              succeeded does nothing.
+            </p>
+            <ul className="space-y-2">
+              {failedWebhooks.map((hook) => (
+                <li
+                  key={hook.id}
+                  className="rounded-2xl border-[1.5px] border-[#B23A0A] bg-white px-4 py-3"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-[12px] font-semibold">
+                      {hook.eventType}
+                    </span>
+                    <span className="text-[12px] text-mute">
+                      {hook.createdAt.toLocaleString("en-NG", {
+                        day: "numeric",
+                        month: "short",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                  </div>
+                  <div className="mt-0.5 text-[12px] text-[#B23A0A]">{hook.error}</div>
+                  <ReplayWebhook webhookEventId={hook.id} />
                 </li>
               ))}
             </ul>

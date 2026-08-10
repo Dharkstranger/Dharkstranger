@@ -7,6 +7,7 @@ import { formatNaira } from "@/lib/money";
 import { Chip, Money, TopBar, Wordmark } from "@/components/ui";
 import { TicketPicker } from "@/components/TicketPicker";
 import { BasketBar } from "@/components/BasketBar";
+import { TrackView } from "@/components/TrackView";
 
 interface Props {
   params: Promise<{ slug: string }>;
@@ -97,6 +98,7 @@ export default async function EventPage({ params }: Props) {
 
   return (
     <div className="pb-28">
+      <TrackView name="event.viewed" eventId={event.id} />
       <div className="relative h-52 bg-gradient-to-br from-night via-plum to-flame sm:h-64">
         {event.bannerUrl && (
           // eslint-disable-next-line @next/next/no-img-element
@@ -177,6 +179,7 @@ export default async function EventPage({ params }: Props) {
         ) : (
           <TicketPicker
             eventSlug={event.slug}
+            eventId={event.id}
             ticketTypes={event.ticketTypes.map((t) => ({
               id: t.id,
               name: t.name,

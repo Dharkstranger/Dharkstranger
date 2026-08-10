@@ -11,6 +11,7 @@ import { ShopForm } from "@/components/ShopForm";
 import { ProductForm } from "@/components/ProductForm";
 import { ConnectForm } from "@/components/ConnectForm";
 import { OrderCard } from "@/components/OrderCard";
+import { ProductRow } from "@/components/ProductRow";
 import { CopyLink } from "@/components/CopyLink";
 
 export const metadata = { title: "Your shop" };
@@ -115,46 +116,23 @@ export default async function ShopPage() {
           <p className="mb-2 text-[13px] text-mute">Nothing listed yet.</p>
         ) : (
           <ul className="mb-2 space-y-2">
-            {shop.products.map((product) => {
-              const available = product.stock - product.reserved;
-              return (
-                <li
-                  key={product.id}
-                  className="flex items-center justify-between rounded-2xl border-[1.5px] border-line bg-white px-4 py-2.5"
-                >
-                  <span className="flex min-w-0 items-center gap-2.5">
-                    {product.imageUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={product.imageUrl}
-                        alt=""
-                        loading="lazy"
-                        className="h-9 w-9 shrink-0 rounded-lg object-cover"
-                      />
-                    ) : (
-                      <span aria-hidden className="text-[18px]">
-                        {product.emoji ?? "🛍️"}
-                      </span>
-                    )}
-                    <span className="truncate text-[14px] font-semibold">
-                      {product.name}
-                    </span>
-                  </span>
-                  <span className="flex items-center gap-3">
-                    <span
-                      className={`text-[12px] ${
-                        available <= product.lowStockThreshold
-                          ? "text-[#B23A0A]"
-                          : "text-mute"
-                      }`}
-                    >
-                      {available} left
-                    </span>
-                    <Money kobo={product.priceKobo} className="text-[13px]" />
-                  </span>
-                </li>
-              );
-            })}
+            {shop.products.map((product) => (
+              <li key={product.id}>
+                <ProductRow
+                  product={{
+                    id: product.id,
+                    name: product.name,
+                    priceKobo: product.priceKobo,
+                    stock: product.stock,
+                    reserved: product.reserved,
+                    emoji: product.emoji,
+                    imageUrl: product.imageUrl,
+                    active: product.active,
+                    lowStockThreshold: product.lowStockThreshold,
+                  }}
+                />
+              </li>
+            ))}
           </ul>
         )}
         <ProductForm shopId={shop.id} />

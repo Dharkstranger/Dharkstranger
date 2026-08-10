@@ -8,6 +8,7 @@ import {
   verifySignInCode,
 } from "@/lib/auth";
 import { RATE_LIMITS, RateLimitError, limitRequest } from "@/lib/rate-limit";
+import { clientIp, recordConsent } from "@/lib/legal";
 
 const requestSchema = z.object({
   action: z.literal("request"),
@@ -67,6 +68,15 @@ export async function POST(request: Request) {
 
       case "verify": {
         const user = await verifySignInCode(parsed.data.email, parsed.data.code);
+        // Signing in is the point at which someone becomes a seller, so this is
+        // where agreement to the terms is captured and evidenced.
+        await recordConsent({
+          email: user.email,
+          userId: user.id,
+          kinds: ["TERMS", "PRIVACY"],
+          ip: clientIp(request),
+          userAgent: request.headers.get("user-agent"),
+        }).catch(() => {});
         return NextResponse.json({ user: { id: user.id, email: user.email } });
       }
 

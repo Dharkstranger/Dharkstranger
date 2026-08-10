@@ -12,6 +12,7 @@ import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { initializeTransaction } from "@/lib/paystack";
 import { RATE_LIMITS, RateLimitError, limitRequest } from "@/lib/rate-limit";
+import { clientIp, recordConsent } from "@/lib/legal";
 
 const schema = z.object({
   eventSlug: z.string().min(1),
@@ -67,6 +68,15 @@ export async function POST(request: Request) {
       ...parsed.data,
       userId: user?.id ?? null,
     });
+
+    // Paying is the point of agreement, so that is when consent is recorded.
+    await recordConsent({
+      email: parsed.data.buyer.email,
+      userId: user?.id ?? null,
+      kinds: ["TERMS", "PRIVACY"],
+      ip: clientIp(request),
+      userAgent: request.headers.get("user-agent"),
+    }).catch(() => {});
 
     const base = process.env.APP_URL || "http://localhost:3000";
 

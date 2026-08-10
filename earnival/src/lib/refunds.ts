@@ -5,6 +5,7 @@ import { generatePaymentReference } from "./ids";
 import { allocate, formatNaira, splitSale, splitTicketSale } from "./money";
 import { createRefund } from "./paystack";
 import { sendEmail } from "./mail";
+import { alertRefundFailed } from "./observability";
 
 /**
  * Refunds — PRD Decision #9, resolved 2026-08-08.
@@ -546,14 +547,18 @@ async function executeRefund(refundId: string): Promise<void> {
       )}</b> is on its way back to your original payment method.</p><p>It usually lands within 5–10 business days.</p>`,
     }).catch(() => {});
   } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
     await db.refund.update({
       where: { id: refundId },
-      data: {
-        status: "FAILED",
-        failureReason: error instanceof Error ? error.message : String(error),
-      },
+      data: { status: "FAILED", failureReason: reason },
     });
-    console.error("[refunds] provider refund failed:", error);
+    // The ledger already shows this reversed but the cash did not move — that
+    // divergence needs a person, urgently.
+    await alertRefundFailed({
+      reference: refund.reference,
+      amountKobo: refund.amountKobo,
+      reason,
+    });
   }
 }
 
