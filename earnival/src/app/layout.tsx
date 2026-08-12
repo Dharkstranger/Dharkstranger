@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Bricolage_Grotesque, Instrument_Sans, Space_Mono } from "next/font/google";
 import "./globals.css";
+import { DemoBanner } from "@/components/DemoBanner";
 
 const display = Bricolage_Grotesque({
   subsets: ["latin"],
@@ -56,6 +57,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           Skip to content
         </a>
         <div className="mx-auto min-h-screen max-w-md bg-paper shadow-2xl">
+          <DemoBanner />
+
           {/* Single main landmark for the whole app; console routes widen
               themselves from inside via ConsoleShell. */}
           <main id="main">{children}</main>

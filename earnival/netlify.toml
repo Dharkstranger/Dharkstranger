@@ -1,0 +1,47 @@
+# Netlify configuration — intended for the demo deployment.
+#
+# The app is server-rendered on every route (event pages, shops and consoles
+# all read the database), so this is not a static export. Netlify's Next.js
+# runtime puts the server work in functions; there is nothing to opt out of.
+#
+# The real production deployment is documented in LAUNCH.md and expects a host
+# with scheduled functions for the settlement cron. Netlify can do that too —
+# see the note at the bottom.
+
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "22"
+  # Prisma downloads engines at install time; keep them for the function bundle.
+  PRISMA_CLI_QUERY_ENGINE_TYPE = "library"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# Ticket badges are bearer credentials — they contain attendee details and
+# grant entry. Keep them out of any cache and out of search results.
+[[headers]]
+  for = "/t/*"
+  [headers.values]
+    Cache-Control = "no-store, max-age=0"
+    X-Robots-Tag = "noindex, nofollow"
+    Referrer-Policy = "no-referrer"
+
+[[headers]]
+  for = "/find/*"
+  [headers.values]
+    Cache-Control = "no-store, max-age=0"
+    X-Robots-Tag = "noindex, nofollow"
+
+# A demo should never be indexed — it would compete with the real site and
+# put simulated prices in front of people searching for the product.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Robots-Tag = "noindex, nofollow"
+
+# The settlement sweep. Netlify Scheduled Functions can call this, but the
+# simplest thing for a demo is to leave it unscheduled — nothing needs
+# settling when no real money is moving. For production, see LAUNCH.md.
