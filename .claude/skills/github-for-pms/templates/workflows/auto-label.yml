@@ -1,0 +1,54 @@
+name: auto-label
+
+# Labels PRs by branch prefix and size, so the board stays useful without
+# anyone remembering to tag things.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const branch = pr.head.ref;
+            const labels = [];
+
+            const byPrefix = {
+              'feat/':  'type:feature',
+              'fix/':   'type:bug',
+              'docs/':  'type:docs',
+              'chore/': 'type:chore',
+              'exp/':   'type:chore',
+            };
+            for (const [prefix, label] of Object.entries(byPrefix)) {
+              if (branch.startsWith(prefix)) { labels.push(label); break; }
+            }
+
+            const changed = (pr.additions || 0) + (pr.deletions || 0);
+            if (changed <= 50)       labels.push('size:S');
+            else if (changed <= 400) labels.push('size:M');
+            else                     labels.push('size:L');
+
+            if (labels.length) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                labels,
+              });
+            }
+
+            // A nudge, not a blocker — big PRs get rubber-stamped, which is
+            // worse for quality than no review at all.
+            if (changed > 400) {
+              core.notice(`This PR changes ${changed} lines. Consider splitting it by user-visible slice.`);
+            }

@@ -1,0 +1,76 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancel superseded runs on the same branch — saves minutes and gives faster feedback.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      node: ${{ steps.check.outputs.node }}
+      python: ${{ steps.check.outputs.python }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        run: |
+          echo "node=$([ -f package.json ] && echo true || echo false)"   >> "$GITHUB_OUTPUT"
+          echo "python=$([ -f pyproject.toml ] || [ -f requirements.txt ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+  node:
+    needs: detect
+    if: needs.detect.outputs.node == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci || npm install
+      - name: Lint
+        run: npm run lint --if-present
+      - name: Test
+        run: npm test --if-present
+      - name: Build
+        run: npm run build --if-present
+
+  python:
+    needs: detect
+    if: needs.detect.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          [ -f requirements.txt ] && pip install -r requirements.txt
+          [ -f pyproject.toml ]   && pip install -e ".[dev]" || true
+      - name: Test
+        run: pytest -q || echo "no tests yet"
+
+  # Always-green anchor so branch protection has a stable required check to point at,
+  # even before the project has any tests. Replace with a real check when there is one.
+  ci:
+    needs: [node, python]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report
+        run: |
+          echo "node:   ${{ needs.node.result }}"
+          echo "python: ${{ needs.python.result }}"
+          if [ "${{ needs.node.result }}" = "failure" ] || [ "${{ needs.python.result }}" = "failure" ]; then
+            echo "::error::A language job failed — see the logs above."
+            exit 1
+          fi

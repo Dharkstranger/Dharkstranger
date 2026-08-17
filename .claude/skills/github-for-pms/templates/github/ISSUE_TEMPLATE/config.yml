@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Product docs
+    url: https://github.com/{{OWNER}}/{{REPO}}/tree/main/docs
+    about: PRDs, decisions, and how-tos live here. Check before filing.
+  - name: Decisions (ADRs)
+    url: https://github.com/{{OWNER}}/{{REPO}}/tree/main/docs/decisions
+    about: Why things are the way they are.

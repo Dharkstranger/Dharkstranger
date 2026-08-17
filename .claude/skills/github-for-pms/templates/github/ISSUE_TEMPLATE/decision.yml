@@ -1,0 +1,70 @@
+name: Decision needed
+description: A choice that needs making, with consequences worth recording
+title: "[Decision] "
+labels: ["type:decision"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Once decided, promote this to an ADR in `docs/decisions/`. Threads get lost;
+        ADRs get read.
+
+  - type: textarea
+    id: decision
+    attributes:
+      label: The decision
+      description: Stated as a question with a clear yes/no or A/B/C answer.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What forces this choice now? What constraints are real?
+    validations:
+      required: true
+
+  - type: textarea
+    id: options
+    attributes:
+      label: Options
+      value: |
+        ### Option A
+        - Pros:
+        - Cons:
+
+        ### Option B
+        - Pros:
+        - Cons:
+
+        ### Do nothing
+        - Consequence:
+    validations:
+      required: true
+
+  - type: dropdown
+    id: reversibility
+    attributes:
+      label: Reversibility
+      description: One-way doors deserve more deliberation. Two-way doors deserve less.
+      options:
+        - "Easy to reverse — decide fast"
+        - "Costly to reverse"
+        - "One-way door — hard to undo"
+    validations:
+      required: true
+
+  - type: input
+    id: decider
+    attributes:
+      label: Who decides
+      placeholder: "@handle — a person, not a team"
+    validations:
+      required: true
+
+  - type: input
+    id: by-when
+    attributes:
+      label: Decide by
+      description: What happens by default if the date passes without a decision?

@@ -1,0 +1,69 @@
+# Labels for a PM-run repo.
+# Apply with: gh label create "<name>" --color <hex> --description "<desc>" --force
+# Or in bulk via the bootstrap script's --labels flag.
+#
+# Principle: few labels, each earning its place. A label nobody filters by is noise.
+
+# --- What kind of thing is this? (exactly one per issue) ---
+- name: "type:feature"
+  color: "0E8A16"
+  description: "New capability a user will have"
+- name: "type:bug"
+  color: "D73A4A"
+  description: "Behaves differently than it should"
+- name: "type:docs"
+  color: "0075CA"
+  description: "PRDs, READMEs, decisions, how-tos"
+- name: "type:research"
+  color: "5319E7"
+  description: "A question to answer before deciding"
+- name: "type:decision"
+  color: "FBCA04"
+  description: "A choice to make, with consequences"
+- name: "type:chore"
+  color: "CFD3D7"
+  description: "Setup, config, dependencies, housekeeping"
+
+# --- How big? (rough, for planning only) ---
+- name: "size:S"
+  color: "C2E0C6"
+  description: "Under a day"
+- name: "size:M"
+  color: "C2E0C6"
+  description: "A few days"
+- name: "size:L"
+  color: "C2E0C6"
+  description: "Over a week — consider splitting"
+
+# --- What's the state? ---
+- name: "needs:input"
+  color: "E99695"
+  description: "Blocked on a human answer"
+- name: "needs:design"
+  color: "E99695"
+  description: "Blocked on design"
+- name: "needs:review"
+  color: "E99695"
+  description: "Waiting on a reviewer"
+- name: "blocked"
+  color: "B60205"
+  description: "Cannot proceed — reason must be in a comment"
+
+# --- How urgent? (use sparingly; if everything is priority:now, nothing is) ---
+- name: "priority:now"
+  color: "B60205"
+  description: "Drop other things"
+- name: "priority:next"
+  color: "D93F0B"
+  description: "Right after current work"
+
+# --- Useful signals ---
+- name: "good-first-issue"
+  color: "7057FF"
+  description: "Well-scoped, good entry point"
+- name: "user-reported"
+  color: "1D76DB"
+  description: "Came from a real user, not from us"
+- name: "learning"
+  color: "BFD4F2"
+  description: "Produced an entry in learning/LEARNING-LOG.md"
