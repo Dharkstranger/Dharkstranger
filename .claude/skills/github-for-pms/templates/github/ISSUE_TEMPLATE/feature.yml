@@ -1,0 +1,61 @@
+name: Feature
+description: A new capability a user will be able to do
+title: "[Feature] "
+labels: ["type:feature"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        One user-visible slice per issue. If you can't describe it as something a
+        person can now do, it's too big or too technical — split it.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Why does this matter? Link the PRD section if there is one.
+      placeholder: Guest shoppers abandon at account creation (42% drop-off, PRD §3).
+    validations:
+      required: true
+
+  - type: textarea
+    id: capability
+    attributes:
+      label: What the user can do after this
+      description: One sentence, from the user's point of view.
+      placeholder: A shopper can reach the payment step with only an email address.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Observable statements. If you can't write these, the slice isn't ready.
+      value: |
+        - [ ]
+        - [ ]
+        - [ ]
+    validations:
+      required: true
+
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Explicitly out of scope
+      description: What this issue is NOT. Prevents scope drift in review.
+
+  - type: dropdown
+    id: size
+    attributes:
+      label: Size
+      options:
+        - "S — under a day"
+        - "M — a few days"
+        - "L — over a week (consider splitting)"
+
+  - type: textarea
+    id: open-questions
+    attributes:
+      label: Open questions
+      description: Anything blocking a start. Add the `needs:input` label if a human must answer.

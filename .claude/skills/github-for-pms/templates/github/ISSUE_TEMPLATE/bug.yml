@@ -1,0 +1,75 @@
+name: Bug
+description: Something behaves differently than it should
+title: "[Bug] "
+labels: ["type:bug"]
+body:
+  - type: textarea
+    id: what-happens
+    attributes:
+      label: What happens
+      description: The actual behavior, precisely.
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-should-happen
+    attributes:
+      label: What should happen
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Numbered, starting from a known state. Reproducibility is most of the fix.
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: How often
+      options:
+        - "Every time"
+        - "Sometimes — pattern unknown"
+        - "Once, couldn't reproduce"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - "P0 — broken for everyone, or data/money at risk"
+        - "P1 — major function broken, workaround exists"
+        - "P2 — degraded, annoying"
+        - "P3 — cosmetic"
+    validations:
+      required: true
+
+  - type: input
+    id: affected
+    attributes:
+      label: Who's affected
+      placeholder: All mobile users / one customer / internal only
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      value: |
+        - Browser/OS:
+        - Version/commit:
+        - URL:
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Screenshots, logs, error text
+      description: Paste the exact error text — a screenshot of text can't be searched.

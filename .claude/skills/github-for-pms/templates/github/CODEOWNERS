@@ -1,0 +1,27 @@
+# CODEOWNERS — who must review changes to what.
+# Owners are auto-requested for review on any PR touching their paths.
+# Last matching pattern wins, so put the most specific rules at the bottom.
+#
+# Syntax: <path pattern>  <@handle or @org/team>
+
+# Default owner for everything
+*                       @{{OWNER}}
+
+# Product docs — the PM owns these outright
+/docs/product/          @{{OWNER}}
+/docs/decisions/        @{{OWNER}}
+/ROADMAP.md             @{{OWNER}}
+/CHANGELOG.md           @{{OWNER}}
+
+# Anything that changes how the repo itself runs
+/.github/               @{{OWNER}}
+
+# --- Add as the team grows ---
+# /src/api/             @backend-team
+# /src/ui/              @frontend-team
+# /infra/               @platform-team
+# /**/*.sql             @data-team
+#
+# Rule of thumb: paths where a wrong change is expensive get an owner.
+# Don't map every folder — CODEOWNERS that requests six reviewers per PR
+# gets ignored, and then it protects nothing.

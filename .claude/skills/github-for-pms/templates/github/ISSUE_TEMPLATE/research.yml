@@ -1,0 +1,50 @@
+name: Research question
+description: Something we need to find out before we can decide
+title: "[Research] "
+labels: ["type:research"]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: The question
+      description: One question. If there are three, open three issues.
+    validations:
+      required: true
+
+  - type: textarea
+    id: decision
+    attributes:
+      label: What decision this unblocks
+      description: Research that doesn't change a decision doesn't need doing.
+    validations:
+      required: true
+
+  - type: textarea
+    id: current-belief
+    attributes:
+      label: What we currently believe, and how confident
+      placeholder: We think users abandon because of the account wall. Medium confidence — inferred from funnel data, not asked.
+
+  - type: dropdown
+    id: method
+    attributes:
+      label: Method
+      options:
+        - "User interviews"
+        - "Survey"
+        - "Usability test"
+        - "Data analysis"
+        - "Competitive review"
+        - "Technical spike"
+        - "Not sure yet"
+
+  - type: textarea
+    id: would-change-mind
+    attributes:
+      label: What answer would change our plan
+      description: Write this before starting. It's the guard against confirming what you hoped.
+
+  - type: input
+    id: deadline
+    attributes:
+      label: Needed by
