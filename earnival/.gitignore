@@ -9,3 +9,7 @@ build/
 coverage/
 next-env.d.ts
 .vercel
+
+# Deployment — these name infrastructure or hold credentials
+deploy/inventory.ini
+deploy/.env.db
