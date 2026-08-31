@@ -246,3 +246,92 @@ export function pickupReadyEmail(params: {
       <p style="font-family:monospace;font-size:30px;font-weight:700;letter-spacing:5px;margin:12px 0">${params.pickupCode}</p>`),
   };
 }
+
+/**
+ * The outcome of an admin review on a paid event from an unverified organiser.
+ *
+ * Without this, an organiser submits an event, waits, and learns the decision
+ * only by reloading the page. Hoo Socials shipped both of these to production,
+ * which is evidence enough that the queue is real and people wait on it.
+ */
+export function eventApprovedEmail(params: {
+  organiserName: string;
+  eventName: string;
+  eventUrl: string;
+}): Omit<EmailMessage, "to"> {
+  return {
+    subject: `${params.eventName} is approved and on sale`,
+    text:
+      `Hi ${params.organiserName}, your event "${params.eventName}" has been approved ` +
+      `and is now on sale. Share it: ${params.eventUrl}`,
+    html: shell(`
+      <p>Hi ${params.organiserName},</p>
+      <p><b>${params.eventName}</b> has been approved and is on sale now.</p>
+      <div style="background:#E4F1E9;border:1px solid #1F6F44;border-radius:14px;padding:14px 16px;margin:16px 0">
+        <div style="color:#1F6F44;font-weight:700;font-size:13px;letter-spacing:1px">APPROVED</div>
+        <div style="color:#1C1030;font-size:14px;margin-top:4px">Tickets can be bought from now on.</div>
+      </div>
+      <p style="margin:20px 0">
+        <a href="${params.eventUrl}"
+           style="background:#FF5E1A;color:#fff;text-decoration:none;padding:14px 24px;border-radius:18px;font-weight:600;display:inline-block">
+          Share your event
+        </a>
+      </p>
+      <p style="color:#6E6578;font-size:13px">
+        Paste that link into WhatsApp and it unfurls with a preview card. Every ticket sold is an impression.
+      </p>`),
+  };
+}
+
+export function eventDeclinedEmail(params: {
+  organiserName: string;
+  eventName: string;
+  reason: string;
+}): Omit<EmailMessage, "to"> {
+  return {
+    subject: `About ${params.eventName}`,
+    text:
+      `Hi ${params.organiserName}, we could not approve "${params.eventName}" yet. ` +
+      `Reason: ${params.reason}. You can edit it and submit again.`,
+    html: shell(`
+      <p>Hi ${params.organiserName},</p>
+      <p>We could not approve <b>${params.eventName}</b> yet.</p>
+      <div style="background:#F8E6E9;border:1px solid #9E1B32;border-radius:14px;padding:14px 16px;margin:16px 0">
+        <div style="color:#9E1B32;font-weight:700;font-size:13px;letter-spacing:1px">WHY</div>
+        <div style="color:#1C1030;font-size:14px;margin-top:4px">${params.reason}</div>
+      </div>
+      <p>Your event is back in draft. Edit it and submit again — most things on this list take a few minutes to fix.</p>
+      <p style="color:#6E6578;font-size:13px">Reply to this email if you think we have it wrong.</p>`),
+  };
+}
+
+/**
+ * Arrival confirmation. Doubles as the attendee's proof they were let in, which
+ * matters when a door dispute happens after the fact.
+ */
+export function checkedInEmail(params: {
+  attendeeName: string;
+  eventName: string;
+  venue: string;
+  checkedInAt: Date;
+}): Omit<EmailMessage, "to"> {
+  const at = params.checkedInAt.toLocaleString("en-NG", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+  return {
+    subject: `You're in — ${params.eventName}`,
+    text: `${params.attendeeName}, you were checked in to ${params.eventName} at ${at}. Enjoy.`,
+    html: shell(`
+      <p>Hi ${params.attendeeName},</p>
+      <p>You're in.</p>
+      <div style="background:#E4F1E9;border:1px solid #1F6F44;border-radius:14px;padding:16px;margin:16px 0">
+        <div style="font-weight:700;font-size:16px;color:#1C1030">${params.eventName}</div>
+        <div style="color:#6E6578;font-size:14px;margin-top:4px">${params.venue}</div>
+        <div style="color:#1F6F44;font-size:14px;margin-top:8px;font-weight:600">Checked in at ${at}</div>
+      </div>
+      <p style="color:#6E6578;font-size:13px">
+        Keep this — it is your record of entry. Shops at the event take payment from your phone; no cash needed.
+      </p>`),
+  };
+}

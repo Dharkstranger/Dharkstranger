@@ -19,6 +19,7 @@ import {
   formatNaira,
 } from "./money";
 import {
+  checkedInEmail,
   orderReceiptEmail,
   pickupReadyEmail,
   sendEmail,
@@ -1006,10 +1007,28 @@ export async function checkInTicket(params: {
     return { ok: false, message: "Already checked in", ticket: { ...base, alreadyCheckedIn: true, checkedInAt: null } };
   }
 
+  const checkedInAt = new Date();
+
+  // Arrival confirmation. Deliberately not awaited: the gate is the one place
+  // in this product where latency is measured in a queue of real people, and
+  // an email provider having a slow minute must never hold up the next scan.
+  // A lost confirmation costs nothing; a stalled door costs the event.
+  void sendEmail({
+    to: ticket.attendeeEmail,
+    ...checkedInEmail({
+      attendeeName: ticket.attendeeName,
+      eventName: ticket.event.name,
+      venue: ticket.event.venue,
+      checkedInAt,
+    }),
+  }).catch(() => {
+    // Swallowed on purpose — checkInTicket has already committed.
+  });
+
   return {
     ok: true,
     message: `${ticket.attendeeName} is in`,
-    ticket: { ...base, alreadyCheckedIn: false, checkedInAt: new Date() },
+    ticket: { ...base, alreadyCheckedIn: false, checkedInAt },
   };
 }
 

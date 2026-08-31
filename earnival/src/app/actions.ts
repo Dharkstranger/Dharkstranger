@@ -19,7 +19,8 @@ import {
 import { RefundError, cancelEventAndRefundAll, refundOrder, refundTickets } from "@/lib/refunds";
 import { SettlementError, addPayoutAccount } from "@/lib/settlement";
 import { PermissionError, assertEventAccess, assertShopAccess } from "@/lib/permissions";
-import { sendEmail } from "@/lib/mail";
+import { eventApprovedEmail, eventDeclinedEmail, sendEmail } from "@/lib/mail";
+import { captureError } from "@/lib/observability";
 import { recordConsent } from "@/lib/legal";
 
 export interface ActionState {
@@ -1216,6 +1217,10 @@ export async function reviewEventAction(
     return { error: "That event was already reviewed" };
   }
 
+  const reason = approve
+    ? null
+    : String(formData.get("reason") ?? "Did not meet our review standards");
+
   await db.event.update({
     where: { id: eventId },
     data: {
@@ -1223,11 +1228,43 @@ export async function reviewEventAction(
       status: approve ? "LIVE" : "DRAFT",
       reviewedById: admin.id,
       reviewedAt: new Date(),
-      rejectionReason: approve
-        ? null
-        : String(formData.get("reason") ?? "Did not meet our review standards"),
+      rejectionReason: reason,
     },
   });
+
+  // Tell the organiser. Without this they submit an event, wait, and find out
+  // only by reloading the page — and a rejection reason nobody reads is the
+  // same as no reason at all. Delivery must never fail the review itself: the
+  // decision is already recorded above.
+  try {
+    const organiser = await db.user.findUnique({
+      where: { id: event.organiserId },
+      select: { email: true, name: true },
+    });
+    if (organiser?.email) {
+      const base = process.env.APP_URL || "http://localhost:3000";
+      const who = organiser.name?.trim() || "there";
+      await sendEmail({
+        to: organiser.email,
+        ...(approve
+          ? eventApprovedEmail({
+              organiserName: who,
+              eventName: event.name,
+              eventUrl: `${base}/e/${event.slug}`,
+            })
+          : eventDeclinedEmail({
+              organiserName: who,
+              eventName: event.name,
+              reason: reason ?? "Did not meet our review standards",
+            })),
+      });
+    }
+  } catch (error) {
+    captureError(error, {
+      scope: "admin.review.notify",
+      detail: { eventId },
+    });
+  }
 
   revalidatePath("/admin");
   revalidatePath(`/e/${event.slug}`);
