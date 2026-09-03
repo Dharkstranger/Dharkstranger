@@ -1,0 +1,941 @@
+// Earnival — commerce infrastructure for events.
+//
+// MONEY RULE: every monetary value in this schema is an INTEGER number of kobo
+// (1 naira = 100 kobo). There are no floats anywhere in the money path. Paystack
+// also transacts in kobo, so no conversion happens at the boundary.
+//
+// LEDGER RULE: Order/Ticket status is workflow state, NOT financial truth.
+// Financial truth lives exclusively in LedgerEntry, which is append-only.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  /// Pooled connection. Serverless functions each open their own connection,
+  /// and Postgres caps out around 100 — a ticket drop exhausts that and every
+  /// request 500s. Point this at a PgBouncer/Neon/Supabase pooler in
+  /// production.
+  url      = env("DATABASE_URL")
+  /// Unpooled connection, used only for migrations, which poolers cannot run.
+  /// Falls back to DATABASE_URL locally where the two are the same.
+  directUrl = env("DIRECT_DATABASE_URL")
+}
+
+// ============================================================
+// Identity
+// ============================================================
+
+/// The trust ladder (PRD §6.1). Each level raises the per-event revenue cap,
+/// unlocks capability, and speeds up settlement.
+enum VerificationLevel {
+  /// Email verified. Free events publish; paid events need admin approval.
+  L0
+  /// Phone verified. Auto-approval, may create and connect shops.
+  L1
+  /// Government identity (BVN or NIN). Daily settlement.
+  L2
+  /// Registered business (CAC + TIN). Verification badge, unlimited revenue.
+  L3
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  phone         String?
+  emailVerified DateTime?
+  phoneVerified DateTime?
+  isAdmin       Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  verificationLevel VerificationLevel @default(L0)
+  /// Granted only on completing every stage through L3 (PRD §6.1).
+  verificationBadge Boolean           @default(false)
+
+  sessions       Session[]
+  events         Event[]         @relation("OrganiserEvents")
+  shops          Shop[]
+  tickets        Ticket[]
+  orders         Order[]
+  payoutAccounts PayoutAccount[]
+  ledgerEntries  LedgerEntry[]
+  settlements    Settlement[]
+  verifications  VerificationSubmission[]
+  reviewedEvents Event[]         @relation("EventReviewer")
+  mediaAssets    MediaAsset[]
+  eventMemberships EventMember[] @relation("EventMemberships")
+  shopMemberships  ShopMember[]  @relation("ShopMemberships")
+}
+
+// ============================================================
+// Teams — cohosts and shop staff (PRD EVT-13, SHP-12)
+// ============================================================
+
+enum TeamRole {
+  /// Delegate who can help run the event and may earn a revenue line.
+  COHOST
+  /// Works the gate only.
+  DOOR_STAFF
+}
+
+enum MemberStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  REVOKED
+}
+
+enum ShareType {
+  NONE
+  FLAT
+  PERCENT
+}
+
+enum RevenueLine {
+  TICKET_SALES
+  SHOP_SHARE
+  SPONSOR
+}
+
+/// Someone other than the organiser who can act on an event.
+///
+/// Without this, exactly one person can check guests in — which means the
+/// organiser stands at the gate all night holding their own phone, and
+/// check-in stops if there is a second entrance.
+///
+/// Invitations are addressed to an email rather than a user, so someone can be
+/// added before they have an account; the row binds to them on sign-in.
+model EventMember {
+  id          String       @id @default(cuid())
+  eventId     String
+  userId      String?
+  inviteEmail String
+  role        TeamRole     @default(DOOR_STAFF)
+  status      MemberStatus @default(PENDING)
+
+  // Capabilities, mapped per member.
+  canCheckIn     Boolean @default(true)
+  canEditEvent   Boolean @default(false)
+  canManageShops Boolean @default(false)
+  canRefund      Boolean @default(false)
+
+  /// Cohost earnings come out of the ORGANISER's share, never the vendor's.
+  earns         Boolean     @default(false)
+  shareType     ShareType   @default(NONE)
+  shareBps      Int?
+  shareFlatKobo Int?
+  revenueLine   RevenueLine @default(TICKET_SALES)
+
+  invitedById String
+  respondedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user  User? @relation("EventMemberships", fields: [userId], references: [id])
+
+  @@unique([eventId, inviteEmail])
+  @@index([userId, status])
+  @@index([inviteEmail])
+}
+
+/// A vendor's staff (PRD SHP-12).
+model ShopMember {
+  id          String       @id @default(cuid())
+  shopId      String
+  userId      String?
+  inviteEmail String
+  status      MemberStatus @default(PENDING)
+
+  canCreateOrders Boolean @default(true)
+  canFulfilOrders Boolean @default(true)
+  canEditProducts Boolean @default(false)
+  canRefund       Boolean @default(false)
+
+  invitedById String
+  respondedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  shop Shop  @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  user User? @relation("ShopMemberships", fields: [userId], references: [id])
+
+  @@unique([shopId, inviteEmail])
+  @@index([userId, status])
+  @@index([inviteEmail])
+}
+
+// ============================================================
+// Consent & telemetry
+// ============================================================
+
+enum ConsentKind {
+  TERMS
+  PRIVACY
+  MARKETING
+  KYC_PROCESSING
+}
+
+/// Evidence that a person agreed to something, and to which version.
+/// NDPR requires consent to be demonstrable, not merely claimed.
+model ConsentRecord {
+  id              String      @id @default(cuid())
+  email           String
+  userId          String?
+  kind            ConsentKind
+  documentVersion String
+  granted         Boolean     @default(true)
+  /// Hashed, never the raw address — it is personal data in its own right.
+  ipHash          String?
+  userAgent       String?
+  createdAt       DateTime    @default(now())
+
+  @@index([email, kind])
+  @@index([userId])
+}
+
+/// Funnel events. Deliberately schemaless in `properties` so new questions can
+/// be asked without a migration, and free of direct identifiers.
+model AnalyticsEvent {
+  id         String   @id @default(cuid())
+  name       String
+  eventId    String?
+  shopId     String?
+  /// Rotating per-visitor id from a first-party cookie; not a user id.
+  visitorId  String?
+  userId     String?
+  properties Json?
+  createdAt  DateTime @default(now())
+
+  @@index([name, createdAt])
+  @@index([eventId, name])
+}
+
+enum KycKind {
+  PHONE
+  BVN
+  NIN
+  CAC_TIN
+}
+
+enum KycStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+/// Evidence submitted to climb the ladder.
+///
+/// PRD VRF-07 / NDPR: BVN, NIN and TIN are sensitive personal data. The raw
+/// identifier is encrypted at rest with a key separate from the database
+/// (`KYC_SECRET`) and is never selected into ordinary queries — reviewers and
+/// the UI see only `last4`. Decryption is deliberately a single, auditable
+/// function in `src/lib/verification.ts`.
+model VerificationSubmission {
+  id     String @id @default(cuid())
+  userId String
+  kind   KycKind
+  /// Level this submission is evidence for.
+  targetLevel VerificationLevel
+
+  /// Last four digits, safe to display to reviewers and the owner.
+  last4            String?
+  /// AES-256-GCM payload as iv:tag:ciphertext. Never logged, never returned.
+  encryptedPayload String?
+  /// Business names are public record, so they need no encryption.
+  businessName     String?
+
+  status          KycStatus @default(PENDING)
+  reviewedById    String?
+  reviewedAt      DateTime?
+  rejectionReason String?
+  createdAt       DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+enum OtpChannel {
+  EMAIL
+  PHONE
+}
+
+/// One-time codes for sign-in (email) and phone verification. Only the hash is
+/// stored, never the code itself.
+model OtpCode {
+  id         String     @id @default(cuid())
+  /// Email address or phone number, depending on `channel`.
+  email      String
+  channel    OtpChannel @default(EMAIL)
+  codeHash   String
+  expiresAt  DateTime
+  consumedAt DateTime?
+  attempts   Int        @default(0)
+  createdAt  DateTime   @default(now())
+
+  @@index([email, channel])
+}
+
+/// Validated bank account that settlements pay into.
+model PayoutAccount {
+  id            String   @id @default(cuid())
+  userId        String
+  bankCode      String
+  bankName      String
+  accountNumber String
+  accountName   String
+  verified      Boolean  @default(false)
+  isDefault     Boolean  @default(false)
+  /// Paystack transfer recipient code, created once and reused per payout.
+  recipientCode String?
+  createdAt     DateTime @default(now())
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  settlements Settlement[]
+
+  @@index([userId])
+}
+
+// ============================================================
+// Events & tickets
+// ============================================================
+
+enum EventStatus {
+  DRAFT
+  LIVE
+  CANCELLED
+  ENDED
+}
+
+enum EventVisibility {
+  PUBLIC
+  UNLISTED
+}
+
+model Event {
+  id            String          @id @default(cuid())
+  slug          String          @unique
+  name          String
+  category      String
+  description   String?
+  venue         String
+  venueAddress  String?
+  startsAt      DateTime
+  endsAt        DateTime?
+  bannerUrl     String?
+  status        EventStatus     @default(DRAFT)
+  visibility    EventVisibility @default(PUBLIC)
+  organiserNote String?
+
+  organiserId String
+  organiser   User   @relation("OrganiserEvents", fields: [organiserId], references: [id])
+
+  /// Fee rates are SNAPSHOT onto each event at publish time. Historical money is
+  /// never recomputed from current platform config.
+  serviceFeeBps    Int @default(750)
+  processingFeeBps Int @default(150)
+
+  /// PRD VRF-05: the organiser's level cap at publish time. NULL means
+  /// unlimited (L3). Snapshot so a later downgrade cannot retroactively
+  /// invalidate sales already made.
+  revenueCapKobo Int?
+
+  approvalStatus  ApprovalStatus @default(AUTO_APPROVED)
+  reviewedById    String?
+  reviewedAt      DateTime?
+  rejectionReason String?
+
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  ticketTypes   TicketType[]
+  tickets       Ticket[]
+  connections   Connection[]
+  orders        Order[]
+  payments      Payment[]
+  ledgerEntries LedgerEntry[]
+  members       EventMember[]
+  reviewedBy    User?         @relation("EventReviewer", fields: [reviewedById], references: [id])
+
+  @@index([status, startsAt])
+  @@index([organiserId])
+  @@index([approvalStatus])
+}
+
+/// PRD VRF-01 / EVT-10: paid events from unverified organisers are reviewed
+/// by an Earnival admin before they can sell.
+enum ApprovalStatus {
+  /// Organiser's level grants auto-approval.
+  AUTO_APPROVED
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+}
+
+model TicketType {
+  id          String   @id @default(cuid())
+  eventId     String
+  name        String
+  description String?
+  priceKobo   Int
+  /// Total ever available for sale.
+  quantity    Int
+  /// Confirmed sales. sold + reserved may never exceed quantity.
+  sold        Int      @default(0)
+  /// Held by in-flight (unpaid) payment attempts; released on expiry.
+  reserved    Int      @default(0)
+  sortOrder   Int      @default(0)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  event   Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  tickets Ticket[]
+
+  @@index([eventId])
+}
+
+enum TicketStatus {
+  /// Row exists to hold the seat while the buyer completes payment. Never
+  /// valid for entry, and released if the payment expires.
+  PENDING_PAYMENT
+  VALID
+  CHECKED_IN
+  CANCELLED
+  REFUNDED
+}
+
+model Ticket {
+  id String @id @default(cuid())
+
+  /// Human-readable check-in code, given to the attendee (e.g. GG-8841).
+  code    String @unique
+  /// HMAC-signed payload encoded into the scannable QR image.
+  qrToken String @unique
+
+  eventId      String
+  ticketTypeId String
+  paymentId    String?
+
+  attendeeName  String
+  attendeeEmail String
+  attendeePhone String?
+
+  /// Set when a guest purchaser later signs in with the same email.
+  userId String?
+
+  pricePaidKobo Int
+  status        TicketStatus @default(VALID)
+  checkedInAt   DateTime?
+  checkedInBy   String?
+
+  createdAt DateTime @default(now())
+
+  event      Event      @relation(fields: [eventId], references: [id])
+  ticketType TicketType @relation(fields: [ticketTypeId], references: [id])
+  payment    Payment?   @relation(fields: [paymentId], references: [id])
+  user       User?      @relation(fields: [userId], references: [id])
+
+  @@index([eventId, status])
+  @@index([attendeeEmail])
+  @@index([userId])
+}
+
+// ============================================================
+// Shops & products
+// ============================================================
+
+enum ShopStatus {
+  DRAFT
+  ACTIVE
+  DEACTIVATED
+}
+
+model Shop {
+  id           String     @id @default(cuid())
+  slug         String     @unique
+  name         String
+  description  String?
+  category     String
+  logoUrl      String?
+  whatsapp     String?
+  supportPhone String?
+  payAtEvent   Boolean    @default(true)
+  status       ShopStatus @default(DRAFT)
+
+  ownerId String
+  owner   User   @relation(fields: [ownerId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products      Product[]
+  connections   Connection[]
+  orders        Order[]
+  ledgerEntries LedgerEntry[]
+  members       ShopMember[]
+
+  @@index([ownerId])
+}
+
+model Product {
+  id                String   @id @default(cuid())
+  shopId            String
+  name              String
+  description       String?
+  priceKobo         Int
+  stock             Int      @default(0)
+  /// Held by in-flight payment attempts; released on expiry.
+  reserved          Int      @default(0)
+  sku               String
+  imageUrl          String?
+  emoji             String?
+  active            Boolean  @default(true)
+  lowStockThreshold Int      @default(1)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  shop       Shop        @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  orderItems OrderItem[]
+
+  @@unique([shopId, sku])
+  @@index([shopId])
+}
+
+// ============================================================
+// Connections — the marketplace engine
+// ============================================================
+
+enum ConnectionStatus {
+  PENDING
+  ACTIVE
+  REJECTED
+  ENDED
+}
+
+enum ConnectionType {
+  SHOP_TO_EVENT
+  EVENT_TO_SHOP
+}
+
+model Connection {
+  id     String         @id @default(cuid())
+  type   ConnectionType @default(SHOP_TO_EVENT)
+  shopId String
+  status ConnectionStatus @default(PENDING)
+
+  eventId String
+
+  // ---- Terms (visible to both sides before acceptance) ----
+  /// Organiser's share of this vendor's sales, in basis points.
+  revenueShareBps     Int     @default(0)
+  applicationFeeKobo  Int     @default(0)
+  applicationFeePayer String  @default("REQUESTER")
+  /// When true the connection fee is added to the buyer's total instead of
+  /// being deducted from the vendor's settlement.
+  passFeeToCustomer   Boolean @default(false)
+  pickupLocation      String?
+  boothName           String?
+  boothFeeKobo        Int     @default(0)
+
+  requestedBy     String
+  respondedAt     DateTime?
+  rejectionReason String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  shop   Shop    @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  event  Event   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  orders Order[]
+
+  @@unique([shopId, eventId])
+  @@index([eventId, status])
+}
+
+// ============================================================
+// Orders
+// ============================================================
+
+enum OrderStatus {
+  CREATED
+  PENDING_PAYMENT
+  PAID
+  PREPARING
+  READY
+  COMPLETED
+  CANCELLED
+  PARTIALLY_REFUNDED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  ONLINE
+  AT_EVENT
+  COUNTER
+}
+
+model Order {
+  id String @id @default(cuid())
+
+  /// Per-shop reference shown to that shop (e.g. EA-1043-1).
+  reference String @unique
+  /// Shared across every shop in a single multi-shop basket (e.g. EA-1043).
+  groupRef  String
+
+  eventId      String?
+  shopId       String
+  connectionId String?
+
+  buyerName  String
+  buyerEmail String?
+  buyerPhone String?
+  userId     String?
+
+  subtotalKobo      Int
+  processingFeeKobo Int @default(0)
+  totalKobo         Int
+
+  /// Settlement terms snapshot at order creation. A later change to the
+  /// connection or platform fee must never alter an existing order's split.
+  serviceFeeBps   Int
+  revenueShareBps Int @default(0)
+
+  status        OrderStatus   @default(CREATED)
+  paymentMethod PaymentMethod @default(ONLINE)
+  paymentId     String?
+
+  pickupCode  String?
+  paidAt      DateTime?
+  readyAt     DateTime?
+  completedAt DateTime?
+  cancelledAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  event         Event?        @relation(fields: [eventId], references: [id])
+  shop          Shop          @relation(fields: [shopId], references: [id])
+  connection    Connection?   @relation(fields: [connectionId], references: [id])
+  user          User?         @relation(fields: [userId], references: [id])
+  payment       Payment?      @relation(fields: [paymentId], references: [id])
+  items         OrderItem[]
+  ledgerEntries LedgerEntry[]
+  refunds       Refund[]
+
+  @@index([shopId, status])
+  @@index([eventId])
+  @@index([groupRef])
+  @@index([buyerEmail])
+}
+
+model OrderItem {
+  id        String @id @default(cuid())
+  orderId   String
+  productId String
+
+  /// Name and price are snapshot so a later product edit cannot rewrite history.
+  nameSnapshot  String
+  unitPriceKobo Int
+  quantity      Int
+
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([orderId])
+}
+
+// ============================================================
+// Payments
+// ============================================================
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  ABANDONED
+}
+
+enum PaymentPurpose {
+  TICKETS
+  ORDER
+}
+
+/// A single charge against the buyer. Its status is authoritative ONLY when
+/// moved by a signature-verified provider webhook or a server-side verify call.
+/// Nothing client-supplied may ever mark a payment successful.
+model Payment {
+  id        String @id @default(cuid())
+  reference String @unique
+  provider  String @default("paystack")
+  purpose   PaymentPurpose
+
+  /// Total charged to the buyer, including the buyer-paid processing fee.
+  amountKobo        Int
+  /// Value of the goods/tickets alone.
+  subtotalKobo      Int
+  processingFeeKobo Int
+
+  status PaymentStatus @default(PENDING)
+
+  buyerName  String
+  buyerEmail String
+  buyerPhone String?
+  userId     String?
+
+  eventId String?
+
+  authorizationUrl  String?
+  providerReference String?
+  rawPayload        Json?
+
+  paidAt    DateTime?
+  /// Reservations attached to this payment are released after this instant.
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  event         Event?        @relation(fields: [eventId], references: [id])
+  tickets       Ticket[]
+  orders        Order[]
+  ledgerEntries LedgerEntry[]
+  refunds       Refund[]
+
+  @@index([status])
+  @@index([buyerEmail])
+  @@index([expiresAt])
+}
+
+// ============================================================
+// Ledger & settlement — the financial source of truth
+// ============================================================
+
+enum LedgerAccount {
+  /// Full value of goods/tickets sold (credit to the selling party).
+  GROSS_SALES
+  /// Buyer-paid processing fee, passed through to the processor.
+  PROCESSING_FEE
+  /// Earnival's plan-based service charge.
+  PLATFORM_SERVICE_FEE
+  /// Organiser's connection share of a vendor's sales.
+  ORGANISER_SHARE
+  /// A cohost's mapped cut, always taken out of the organiser's line.
+  COHOST_SHARE
+  /// Net payable to the vendor.
+  VENDOR_NET
+  /// Net payable to the organiser from ticket sales.
+  ORGANISER_TICKET_NET
+  APPLICATION_FEE
+  BOOTH_FEE
+  /// Cash actually returned to a buyer.
+  REFUND
+  /// Processing fee Earnival absorbs on a refund, because the processor does
+  /// not return it but the buyer is made whole anyway.
+  PROCESSING_FEE_ABSORBED
+  /// Money moved out to a party's bank account by a settlement run.
+  PAYOUT
+}
+
+/// Append-only. Rows are NEVER updated or deleted; corrections are new
+/// contra-entries. A party's balance is the sum of their entries.
+model LedgerEntry {
+  id         String        @id @default(cuid())
+  account    LedgerAccount
+  /// Signed. Positive credits the party, negative debits them.
+  amountKobo Int
+
+  /// The party this accrues to. NULL means the Earnival platform itself.
+  partyId String?
+
+  paymentId    String?
+  orderId      String?
+  eventId      String?
+  shopId       String?
+  settlementId String?
+  refundId     String?
+
+  description String
+  createdAt   DateTime @default(now())
+
+  party      User?       @relation(fields: [partyId], references: [id])
+  payment    Payment?    @relation(fields: [paymentId], references: [id])
+  order      Order?      @relation(fields: [orderId], references: [id])
+  event      Event?      @relation(fields: [eventId], references: [id])
+  shop       Shop?       @relation(fields: [shopId], references: [id])
+  settlement Settlement? @relation(fields: [settlementId], references: [id])
+  refund     Refund?     @relation(fields: [refundId], references: [id])
+
+  @@index([partyId, settlementId])
+  @@index([paymentId])
+  @@index([eventId])
+  @@index([account])
+  @@index([refundId])
+}
+
+// ============================================================
+// Refunds
+// ============================================================
+
+enum RefundStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum RefundReason {
+  BUYER_REQUEST
+  EVENT_CANCELLED
+  ORDER_CANCELLED
+  VENDOR_UNABLE_TO_FULFIL
+  DUPLICATE_CHARGE
+  OTHER
+}
+
+/// A return of money to a buyer.
+///
+/// Refunds never mutate the original ledger entries. They append contra-entries
+/// that debit each party who was credited, so a party's balance is still the
+/// plain sum of their rows.
+model Refund {
+  id        String @id @default(cuid())
+  reference String @unique
+
+  paymentId String
+  /// Set when refunding one shop's order out of a multi-shop basket.
+  orderId   String?
+
+  /// Total returned to the buyer, including the processing fee they paid.
+  amountKobo        Int
+  /// Goods value being reversed off the selling parties.
+  goodsKobo         Int
+  /// Processing portion returned to the buyer but not recoverable from the
+  /// processor — Earnival absorbs it.
+  processingFeeKobo Int
+
+  reason RefundReason
+  note   String?
+  status RefundStatus @default(PENDING)
+
+  providerReference String?
+  failureReason     String?
+
+  requestedById String?
+  createdAt     DateTime  @default(now())
+  completedAt   DateTime?
+
+  payment       Payment       @relation(fields: [paymentId], references: [id])
+  order         Order?        @relation(fields: [orderId], references: [id])
+  ledgerEntries LedgerEntry[]
+
+  @@index([paymentId])
+  @@index([status])
+}
+
+enum SettlementStatus {
+  PENDING
+  PROCESSING
+  PAID
+  FAILED
+}
+
+model Settlement {
+  id         String           @id @default(cuid())
+  reference  String           @unique
+  partyId    String
+  amountKobo Int
+  status     SettlementStatus @default(PENDING)
+
+  payoutAccountId String?
+  /// Paystack transfer code, returned when the transfer is initiated.
+  providerTransferCode String?
+  periodStart          DateTime
+  periodEnd            DateTime
+  paidAt               DateTime?
+  failureReason        String?
+  createdAt            DateTime  @default(now())
+
+  party        User           @relation(fields: [partyId], references: [id])
+  payoutAccount PayoutAccount? @relation(fields: [payoutAccountId], references: [id])
+  entries      LedgerEntry[]
+
+  @@index([partyId, status])
+  @@index([status])
+}
+
+// ============================================================
+// Infrastructure
+// ============================================================
+
+/// Every provider webhook is recorded before processing so a replayed or
+/// duplicated delivery can never double-credit anyone.
+model WebhookEvent {
+  id          String    @id @default(cuid())
+  provider    String
+  externalId  String
+  eventType   String
+  payload     Json
+  processedAt DateTime?
+  error       String?
+  createdAt   DateTime  @default(now())
+
+  @@unique([provider, externalId])
+}
+
+/// Uploaded images — event banners and product photos.
+///
+/// Bytes live in Postgres rather than object storage so a fresh deployment
+/// works with no extra service to configure. Uploads are downscaled in the
+/// browser before they arrive, so rows stay small. If volume ever outgrows
+/// this, only `src/lib/media.ts` needs to change: everything else refers to
+/// images by URL.
+model MediaAsset {
+  id          String   @id @default(cuid())
+  contentType String
+  bytes       Bytes
+  byteSize    Int
+  width       Int?
+  height      Int?
+  /// Who uploaded it, for quota and abuse handling.
+  ownerId     String?
+  createdAt   DateTime @default(now())
+
+  owner User? @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+
+  @@index([ownerId])
+}
+
+/// Fixed-window rate limit counters. Stored in Postgres rather than memory so
+/// the limit holds across serverless instances, which do not share process
+/// state.
+model RateLimitCounter {
+  key         String   @id
+  count       Int      @default(0)
+  windowStart DateTime
+
+  @@index([windowStart])
+}
+
+/// Guards non-idempotent POSTs (order creation, check-in sync) against
+/// double-submits and offline replay.
+model IdempotencyKey {
+  id           String   @id @default(cuid())
+  key          String   @unique
+  scope        String
+  responseBody Json?
+  createdAt    DateTime @default(now())
+}

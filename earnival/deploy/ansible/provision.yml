@@ -1,0 +1,210 @@
+---
+# One-time provisioning for an Earnival box.
+#
+# Adapted from hoo-socials-infra/ansible/setup_vps.yml. The Postgres install
+# follows the same PGDG-repo approach, which is the part worth keeping; the
+# rest is reshaped for a Next.js app rather than a NestJS API.
+#
+#   ansible-playbook -i inventory.ini ansible/provision.yml
+
+- name: Provision Earnival (Postgres 16, Node 22, Nginx)
+  hosts: earnival
+  become: yes
+
+  vars:
+    app_user: earnival
+    app_dir: /srv/earnival
+    repo_url: "https://github.com/Dharkstranger/Dharkstranger.git"
+    repo_branch: main
+    db_name: earnival
+    db_user: earnival
+    pg_version: "16"
+    node_major: "22"
+
+  tasks:
+    # ── database password, generated once and kept on the control machine ──
+    - name: Check for an existing generated DB password
+      local_action: stat path=.env.db
+      register: db_pass_file
+      become: no
+
+    - name: Load the existing password
+      set_fact:
+        db_password: "{{ lookup('file', '.env.db') | regex_replace('DB_PASSWORD=', '') | trim }}"
+      when: db_pass_file.stat.exists
+
+    - name: Generate a database password
+      set_fact:
+        db_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+      when: not db_pass_file.stat.exists
+
+    - name: Save it on the control machine
+      local_action:
+        module: copy
+        content: "DB_PASSWORD={{ db_password }}"
+        dest: .env.db
+        mode: "0600"
+      become: no
+      when: not db_pass_file.stat.exists
+
+    # ── base packages ──────────────────────────────────────────────────────
+    - name: Update apt cache
+      apt: { update_cache: yes, cache_valid_time: 3600 }
+
+    - name: Install base packages
+      apt:
+        name: [gnupg, curl, ca-certificates, git, nginx, ufw, acl, python3-psycopg2]
+        state: present
+
+    # ── PostgreSQL from the PGDG repository ───────────────────────────────
+    - name: Ensure the keyring directory exists
+      file: { path: /usr/share/keyrings, state: directory, mode: "0755" }
+
+    - name: Add the PostgreSQL signing key
+      apt_key:
+        url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+        keyring: /usr/share/keyrings/pgdg.gpg
+        state: present
+
+    - name: Add the PGDG repository
+      apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/pgdg.gpg] http://apt.postgresql.org/pub/repos/apt {{ ansible_distribution_release }}-pgdg main"
+        state: present
+        filename: pgdg
+
+    - name: Install PostgreSQL {{ pg_version }}
+      apt:
+        name: ["postgresql-{{ pg_version }}", "postgresql-client-{{ pg_version }}"]
+        state: present
+        update_cache: yes
+
+    - name: Start and enable PostgreSQL
+      service: { name: postgresql, state: started, enabled: yes }
+
+    - name: Create the database role
+      become_user: postgres
+      postgresql_user:
+        name: "{{ db_user }}"
+        password: "{{ db_password }}"
+        role_attr_flags: LOGIN
+
+    - name: Create the database
+      become_user: postgres
+      postgresql_db:
+        name: "{{ db_name }}"
+        owner: "{{ db_user }}"
+        encoding: UTF8
+
+    # ── Node ───────────────────────────────────────────────────────────────
+    - name: Add the NodeSource key
+      apt_key:
+        url: https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
+        keyring: /usr/share/keyrings/nodesource.gpg
+        state: present
+
+    - name: Add the NodeSource repository
+      apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_{{ node_major }}.x nodistro main"
+        state: present
+        filename: nodesource
+
+    - name: Install Node.js
+      apt: { name: nodejs, state: present, update_cache: yes }
+
+    # ── application user and checkout ──────────────────────────────────────
+    - name: Create the application user
+      user: { name: "{{ app_user }}", system: yes, shell: /bin/bash, home: "{{ app_dir }}" }
+
+    - name: Create the application directory
+      file: { path: "{{ app_dir }}", state: directory, owner: "{{ app_user }}", group: "{{ app_user }}", mode: "0755" }
+
+    - name: Clone the repository
+      become_user: "{{ app_user }}"
+      git:
+        repo: "{{ repo_url }}"
+        dest: "{{ app_dir }}/src"
+        version: "{{ repo_branch }}"
+        force: yes
+
+    # ── environment file ───────────────────────────────────────────────────
+    # Secrets are generated here and never leave the box. QR_SECRET and
+    # KYC_SECRET can never be rotated without destroying data, so this task
+    # creates the file only if it does not already exist.
+    - name: Check whether the environment file exists
+      stat: { path: "{{ app_dir }}/.env" }
+      register: env_file
+
+    - name: Write the environment file
+      when: not env_file.stat.exists
+      copy:
+        dest: "{{ app_dir }}/.env"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0600"
+        content: |
+          # Generated at provision time. QR_SECRET and KYC_SECRET must never
+          # change: every issued ticket is signed with the first, and all
+          # BVN/NIN data is encrypted under the second.
+          DATABASE_URL="postgresql://{{ db_user }}:{{ db_password }}@127.0.0.1:5432/{{ db_name }}"
+          DIRECT_DATABASE_URL="postgresql://{{ db_user }}:{{ db_password }}@127.0.0.1:5432/{{ db_name }}"
+          APP_URL="https://earnival.app"
+          AUTH_SECRET="{{ lookup('password', '/dev/null length=64 chars=hexdigits') | lower }}"
+          QR_SECRET="{{ lookup('password', '/dev/null length=64 chars=hexdigits') | lower }}"
+          KYC_SECRET="{{ lookup('password', '/dev/null length=64 chars=hexdigits') | lower }}"
+          CRON_SECRET="{{ lookup('password', '/dev/null length=64 chars=hexdigits') | lower }}"
+          PAYSTACK_SECRET_KEY=""
+          PAYSTACK_PUBLIC_KEY=""
+          RESEND_API_KEY=""
+          EMAIL_FROM="Earnival <tickets@earnival.app>"
+          NODE_ENV=production
+
+    # ── systemd ────────────────────────────────────────────────────────────
+    - name: Install the systemd unit
+      copy:
+        dest: /etc/systemd/system/earnival.service
+        content: |
+          [Unit]
+          Description=Earnival
+          After=network.target postgresql.service
+          Requires=postgresql.service
+
+          [Service]
+          Type=simple
+          User={{ app_user }}
+          WorkingDirectory={{ app_dir }}/src/earnival
+          EnvironmentFile={{ app_dir }}/.env
+          ExecStart=/usr/bin/npm run start
+          Restart=always
+          RestartSec=5
+          StandardOutput=journal
+          StandardError=journal
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Reload systemd
+      systemd: { daemon_reload: yes }
+
+    # ── the sweep ──────────────────────────────────────────────────────────
+    # If this stops, reservations are never released and nobody is paid.
+    - name: Install the cron sweep
+      become_user: "{{ app_user }}"
+      cron:
+        name: "earnival settlement sweep"
+        minute: "*/15"
+        job: >-
+          . {{ app_dir }}/.env &&
+          curl -fsS -X POST http://127.0.0.1:3000/api/cron/settle
+          -H "Authorization: Bearer $CRON_SECRET" >/dev/null
+
+    # ── firewall ───────────────────────────────────────────────────────────
+    - name: Allow OpenSSH and Nginx
+      ufw: { rule: allow, name: "{{ item }}" }
+      loop: ["OpenSSH", "Nginx Full"]
+
+    - name: Enable the firewall
+      ufw: { state: enabled, policy: deny, direction: incoming }
+
+  handlers:
+    - name: reload nginx
+      service: { name: nginx, state: reloaded }

@@ -1,0 +1,19 @@
+node_modules/
+.next/
+out/
+build/
+.env
+.env*.local
+*.log
+.DS_Store
+coverage/
+next-env.d.ts
+
+# TypeScript incremental build cache — machine-local, rewritten on every
+# typecheck. Tracking it means every `tsc` run shows as a diff.
+*.tsbuildinfo
+.vercel
+
+# Deployment — these name infrastructure or hold credentials
+deploy/inventory.ini
+deploy/.env.db
